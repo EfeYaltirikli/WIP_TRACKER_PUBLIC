@@ -668,8 +668,10 @@ class Page(QWidget):
         self.mcard.content_lay.addWidget(self.matrix)
         self.legend_sw = []
         self.paint_legend()
-        self.mcard.show()
+        # ModuleGrid.add() hides what it is given: shown AFTER it is added
+        # (2.2.0 first build showed it before - the route never appeared)
         self.grid.add(self.mcard, wide=True)
+        self.mcard.show()
         self.grid.relayout()
 
     # ---------------------------------------------------------------
