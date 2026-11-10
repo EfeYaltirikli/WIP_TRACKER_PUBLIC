@@ -1,3 +1,4 @@
-WIP TRACKER 2.1.4
+WIP TRACKER 2.2.0
 
-Kurulum ve derleme adimlari zip icindeki OKU.txt dosyasinda.
+Kaynak dosyalar dogrudan .py olarak buradadir (Code > Download ZIP).
+Kurulum ve derleme adimlari OKU.txt dosyasinda. Calistirilan dosya: qt_app.py

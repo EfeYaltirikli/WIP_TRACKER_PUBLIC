@@ -1,0 +1,3740 @@
+WIP TRACKER 2.2.0 - YENI TASARIM (Qt / PySide6)
+=============================================
+
+Bu surum ekranlari bastan yeni tasarimla (Qt) kurar.  Veri, hesaplar ve
+veritabani AYNIDIR (wip_core) - ayni paylasilan veritabanini kullanir,
+eski surumle yan yana calisabilir.
+
+1) DOSYALAR
+  2.2.0'dan beri kaynak dosyalar GitHub reposunda dogrudan .py olarak
+  durur (zip / .txt yok, yeniden adlandirma gerekmez).  Repodan
+  "Code > Download ZIP" ile indirin ve bir klasore acin.
+
+  18 adet .py olmali.  Calistirilan dosya: qt_app.py
+  (KURTARMA.py uygulamanin parcasi degil, ayri bir aractir: veritabani
+   bozulursa kullanilir - asagida "VERITABANI BOZULDUYSA".  PyInstaller
+   derlemesine girmez.)
+
+2) KURULUM (bir kere, Windows cmd):
+    py -m pip install PySide6 openpyxl
+  Eski .xls (Excel 97-2003) dosyalari icin:
+    py -m pip install xlrd
+  Kontrol (derlemede kullanilan AYNI py ile):
+    py -c "import xlrd; print(xlrd.__version__)"
+  Surum yaziyorsa tamam; "No module named xlrd" diyorsa xlrd baska bir
+  Python'a kurulmus demektir - yukaridaki pip komutunu ayni "py" ile
+  tekrar calistirin (ayri bir derleme ortami kullaniyorsaniz, ornegin
+  C:\wip_build, onun python.exe'si ile:  C:\wip_build\Scripts\python.exe
+  -m pip install xlrd).
+
+  Denemek icin derlemeden calistirma:
+    py qt_app.py
+
+3) DERLEME (Windows, cmd):
+  py -m PyInstaller --onedir --windowed --noupx --icon=wip_icon.ico ^
+    --add-data "wip_icon.ico;." --collect-all xlrd ^
+    --name "WIP TRACKER" qt_app.py
+
+  --collect-all xlrd: .xls okuyucusu tum dosyalariyla exe'ye girsin diye
+  (v73).  ONEMLI: PyInstaller xlrd'yi KENDISINI calistiran Python'da
+  arar.  Derlemeden once AYNI komutla kontrol edin:
+      py -c "import xlrd, sys; print(xlrd.__version__, sys.executable)"
+      py -m PyInstaller --version
+  Ilk satir hata veriyorsa:  py -m pip install xlrd   (sonra tekrar
+  derleyin).  Derleme ciktisinda "collect_all: xlrd ... not found" gibi
+  bir uyari varsa xlrd o Python'da yok demektir.
+  Kontrol: exe'yi acin, DATA & SETTINGS > Load data altinda
+  "Old Excel (.xls) reader: available" yazmali.
+
+  Program adi HER SURUMDE ayni: "WIP TRACKER" (v71'den beri).  Yeni
+  surum eskisinin uzerine yazilir, kisayollar degismez.
+
+  PyInstaller yuklu degilse once:
+    py -m pip install pyinstaller
+
+  Not: paket adi kucuk harfle kurulur (pip install pyinstaller) ama
+  modul adi buyuk harflidir - "py -m PyInstaller" olarak cagirilir.
+
+  Sonuc:  dist\WIP TRACKER\WIP TRACKER.exe
+
+4) DOSYALAR
+  wip_core.py          veri ve tum hesaplar (eski surumle ayni)
+  wip_layout_assets.py B1000 sembolleri (eski surumle ayni)
+  wip_logo_data.py     sol ustteki logo
+  qt_app.py            pencere, ust cubuk, sol menu  (CALISTIRILAN)
+  qt_theme.py          renkler, gece / gunduz
+  qt_widgets.py        ortak parcalar: filtre cipleri, tablolar, kartlar
+  qt_auth.py           giris, sifre
+  qt_page_analysis.py  RW Analysis
+  qt_page_cause.py     Cause Op Analysis
+  qt_page_waterfall.py Waterfall
+  qt_page_leadtime.py  Lead Time Analysis (2.2.0)
+  qt_page_mrbscrap.py  MRB / Scrap / TECO
+  qt_page_bottleneck.py Part Bottleneck
+  qt_page_b1000.py     B1000 Live
+  qt_page_forecast.py  Forecast
+  qt_page_acc.py       Custom Analysis
+  qt_page_settings.py  Data & Settings (ADMIN bolumu yalniz admin/co-admin)
+
+
+============================================================
+2.2.0  -  LEAD TIME ANALYSIS SAYFASI, OPERASYON GRUPLARI, 0600 = 600
+============================================================
+
+  - YENI SAYFA: LEAD TIME ANALYSIS (sol menude Waterfall'in altinda).
+    Waterfall'daki "Lead time / queue / flow efficiency" modulu buraya
+    tasindi, Waterfall'dan kaldirildi.  Hesap AYNI: onceki operasyonun
+    tamamlanmasindan bu operasyonun X'ine kadar gecen duz sure; CUTTING =
+    makine suresi, makine suresi yoksa iscilik.
+      * Filtreler diger sayfalardaki gibi (muhendis, grup, parca, zaman,
+        flag, seri listesi, tezgah).
+      * Varsayilan birim GUN (Days); Hours ile saate cevrilir.
+      * Date filter:  By op date / By serial / SOLD IN RANGE
+        Sold in range = satis tarihi (sevk raporu) secilen araliga dusen
+        seriler alinir, bu serilerin TUM operasyonlari kullanilir.
+      * Ustte tum rota: LEAD, CUTTING, QUEUE, FLOW EFF.
+  - OPERASYON GRUPLARI (ayni sayfa, sagdaki modul): "New" ile bir analiz
+    acin, her satira GRUP ADI (TURN, MILL ...), PARCA, FROM op, TO op
+    yazin.  Ayni grup adini birden fazla parcaya verebilirsiniz.
+      Sure = TO operasyonunun bitisi (X) - FROM operasyonunun bitisi
+      (ornek: TURN = 130 -> 150 ise 150 bitis - 130 bitis).
+    Grup satiri: gruptaki tum parcalarin TUM serilerinin ortalamasi;
+    altinda her parcanin kendi ortalamasi.  Analizler herkes icin
+    kaydedilir (Edit / Delete).  Excel'de "OP GROUPS" sayfasi.
+  - 0600 / 600: RW Analysis ve Cause tablolarinda ayni operasyon iki ayri
+    satir olarak cikiyordu (veride bir satirda 0600, digerinde 600).
+    Artik operasyon numarasi traveler'daki yazimla (600) gosterilir ve
+    tek satirda toplanir.  Veriyi yeniden yuklemek GEREKMEZ.
+  - YENI HESAP: muratk - Murat Karamahmutoglu, yeni rol GMY (Genel Mudur
+    Yardimcisi).  Tum muhendislerin parcalarini gorur; admin degildir.
+    Program ilk acilista hesabi kendisi ekler, sifresini ilk giriste
+    kendisi belirler.
+  - HIZ: bir parcanin operasyon kayitlarinin ilk okunmasi ve lead time
+    hesabi hizlandi (Waterfall / Lead Time / Forecast ilk acilis).
+  - Kaynak artik repoda dogrudan .py (zip / .txt yok).
+
+============================================================
+2.1.4  -  EKLEME (ADD) SONRASI WATERFALL GUNCELLENMIYORDU
+============================================================
+
+  - SORUN: SAP dosyasi Add ile yuklenince RW sayfalari yeni veriyi
+    gosteriyor, Waterfall ise eski operasyon / tezgah surelerinde
+    kaliyordu.  Neden: paylasilan klasorde baska bir baglanti (bakim
+    modunda bile programin kendi arka plan hazirligi) veritabanini
+    okurken, Waterfall tablosunun yeniden kurulmasi 1,5 saniye bekleyip
+    "database is locked" ile vazgeciyordu - yalniz log'a bir satir
+    dusuyordu.
+  - Artik yeniden kurma, okuyan baglantinin bitmesini bekler (45 sn'ye
+    kadar) ve tek parca yazilir; yarida kalirsa eski veri aynen durur.
+    Tum yuklemelerin son kayit adimi da ayni sekilde bekler.
+  - Yine de olmazsa: yukleme ekraninda uyari penceresi, DATA HEALTH'te
+    "WATERFALL DATA" uyarisi; program bir sonraki acilista tabloyu
+    kendisi yeniden kurar.
+  - Bu sorunu yasadiysaniz: ilgili gunlerin SAP dosyasini bir kez daha
+    Add ile yukleyin (Add o gunleri silip yeniden yazar, cift saymaz).
+
+============================================================
+2.1.3  -  LEAD TIME TARIH FILTRESI, TABLO SADE, TRAVELER ONCUL YOK
+============================================================
+
+  - WATERFALL > Lead time / queue / flow efficiency modulunde tablonun
+    ustunde "Date filter" secimi:
+      By op date  (klasik) yalniz secilen tarih araligindaki operasyon
+                  kayitlari kullanilir.
+      By serial   aralikta girisi olan seriler secilir ve bu serilerin
+                  TUM operasyonlari kullanilir - baska tarihlerde
+                  girilmis olsa bile hicbir operasyon atlanmaz.
+  - Secim bu bilgisayarda hatirlanir.  Excel ciktisinda hangi yolun
+    kullanildigi yazar.
+  - Ayni tabloda her satir tek operasyon: OP ve yaninda DESCRIPTION
+    (onceki operasyon sutunlari kaldirildi - adim, ust
+    satirdaki operasyondan olculur).  Excel'de de ayni.
+  - TRAVELER: onceki operasyon ("-" / Oncul) sutunu artik yazilmaz ve
+    okunmaz.  Waterfall'daki lead araliklari dahil her sey bir onceki
+    operasyondan olculur.  Eski dosyalarda bu sutun durursa atlanir.
+    TRAVELER_SABLON.xlsx'ten de kaldirildi.
+  - TRAVELER yuklenince log'da MACHINE GROUPS bolumu: dosyadaki her
+    grup adi COMP ile eslestirilir - eslesenin COMP tezgahlari, COMP'ta
+    olmayanlar "NOT IN COMP" olarak yazilir.  Yalniz traveler dosyasini
+    yeniden yuklemek yeterli; diger veriler yeniden yuklenmez.
+  - RW ANALYSIS (ve Cause Op): REJECT / CAUSE OP DESCRIPTION o parcanin
+    kendi traveler tanimindan (280/3 kendi sekans tanimiyla); traveler'da
+    yoksa eskisi gibi.  WC DESCRIPTION, COMP'ta tezgaha verilen kisa grup
+    adindan; grup yoksa COMP'taki uzun addan.
+  - CAUSE OP numarasi "580.00" gibi ondalikli gelen kayitlar artik 580
+    olarak taninir ve gosterilir - tanimi bos ("-") gelmiyordu.  Veriyi
+    yeniden yuklemek gerekmez.
+  - CAUSE OP sayfasinda uc modul de acik gelir.
+  - HIZ: waterfall lead hesaplari tekrar kullaniliyor (seri basina bir
+    kez); Lead time modulu ve Predicted pos. ayni filtrede bellekten gelir.
+
+============================================================
+2.1.2  -  LEAD TIME X KURALIYLA, WATERFALL CURRENT OP
+============================================================
+
+  - LEAD TIME artik operasyonun X ile kapandigi tarih-saatten
+    olculur: bir adimin lead'i = bu operasyonun X'i - onceki
+    operasyonun tamamlanmasi.  Onceki operasyon X'siz gecildiyse ona
+    yapilan son giris tamamlanma sayilir.  X'i gelmemis operasyonun
+    lead'i henuz hesaplanmaz.
+  - Sure vardiya takvimine gore degil, duz tarih-saat farkiyla
+    hesaplanir.
+  - Negatif cikan ve o adimin medyaninin 3 katindan buyuk olan
+    degerler ortalamaya girmez.
+  - CUTTING (kesim) operasyona girilen MAKINE suresidir; makine suresi
+    olmayan operasyonda (yalniz iscilik) ISCILIK suresi kullanilir.
+    QUEUE = lead - cutting.
+  - Toplam lead (AVG LEAD) = son operasyonun X'i - ilk operasyonun X'i.
+    REMAINING, matristeki lead satiri ve Predicted pos. ayni kuralla.
+  - WATERFALL: sol sutun "LAST OP" yerine "CURRENT OP": parca
+    isleniyorsa islendigi, bekliyorsa bekledigi operasyon - matriste
+    gorunen yer.  Predicted pos. aciksa tahmini operasyon.  Rotayi
+    bitirenlerde son operasyon.  Excel ciktisinda da ayni.
+
+============================================================
+2.1.1  -  FILTRELER KULLANICIYA KALICI
+============================================================
+
+  - Her sayfada kisinin son biraktigi filtreler (zaman, TECO/MRB/not
+    flag'leri, seri listesi, bekleme gunu, makineler, WIP anahtari)
+    bir sonraki acilista ayni gelir.  Hesaba bagli kaydedilir, hangi
+    bilgisayardan girilirse girilsin.
+  - Engineer / Group / Part kalici DEGIL: her acilista ilk kuraldaki
+    gibi (kisinin kendi muhendisi, yoksa ALL) baslar.
+  - "Reset all" filtreleri temeller ve o hal kaydedilir.
+  - WATERFALL: "By WIP part" yaninda "From op" filtresi.  Listeden bir
+    operasyon secilir; yalniz o operasyonda veya daha ilerisinde olan
+    seriler gelir (rotayi bitirmis olanlar da dahil).  Secim de kalici.
+  - GIRIS: Caps Lock acikken sifre kutusunun altinda kirmizi
+    "Caps Lock is on" uyarisi cikar (Windows'ta tusa basmadan da).
+  - HIZ: Waterfall filtre degisimi (flag, WIP, zaman) ~0.5 sn -> ~0.03
+    sn; filtreler acilip kapaninca sonuc bellekten gelir.  Waterfall'a
+    gecmek arka planda hazirlanan Forecast verisini artik silmiyor.
+    Rota hesabi seri basina degil rota basina bir kez yapilir
+    (Waterfall, Bottleneck).  MRB / B1000 acilirken arka plandaki
+    hazirligin yalniz kendi kismini bekler (Forecast'inkini degil) -
+    baska kullanici veri yukledikten sonraki yavas acilislar icin.
+  - PART filtresi: tek parcali sayfalarda (Waterfall, Bottleneck)
+    tiklama hemen uygular ve pencereyi kapatir.  Cok parcali sayfalarda
+    tiklamalar yalniz isaretler, APPLY uygular (tek yenileme); APPLY'a
+    basmadan disari tiklanirsa secim geri alinir.
+  - Filtre pencereleri icerigine gore boyutlanir (eskiden hep 900 px);
+    cok parcada parca listesi kaydirilir.
+  - IKON: wip_icon.ico yeniden yazildi - kucuk boyutlar (16-128) klasik
+    BMP, 256 PNG (eskiden hepsi PNG idi; Windows ag yolundaki exe'den
+    PNG kucuk ikonu okuyamayinca gorev cubugu bos kaliyordu).  Ayrica
+    acilista ikon ~/.rw_analysis'e kopyalanip pencereye dogrudan verilir.
+
+
+============================================================
+2.1.0  -  RTD SERILERI, WATERFALL, AYAR HIZI, GIRIS
+============================================================
+
+  - SATIS KONTROLU: sevk raporunda RTD ile baslayan seriler (RTD2G7RR,
+    TMTRTD2G7RR) RTD'den sonraki seri ile eslesir (2G7RR).  Uretim
+    verisinde RTD'li yazilmis seri de satilmis sayilir.  Eski yuklenmis
+    sevk satirlari ilk acilista kendiliginden duzeltilir (sema 26).
+  - WATERFALL: ustteki AVG LEAD ve tablodaki "Lead time" satiri artik
+    hep ALL TIME (tarih filtresinden bagimsiz).  Filtreli lead time
+    "Lead time / queue / flow efficiency" modulunde.
+  - WATERFALL: "By WIP part" acik gelir (Reset all da acik birakir).
+  - WATERFALL: alttaki renk aciklamasi kalkti, tablo o alani da kullanir.
+  - Sag alt: yalniz "Connected | saat" (change / journal yazmiyor).
+  - Sayi kutularinin (hafta, gun, adet...) yukari/asagi oklari her
+    sayfada okun cizildigi yerden tiklanir (Windows'ta kayikti).
+  - AYARLAR: kapanma suresi (idle) kaydi artik "veri degisti" demiyor;
+    eskiden butun kopyalar tum hesaplari bastan yapiyordu (agda 1-2 dk).
+    Shop rules / vardiya tablosu da yalniz deger GERCEKTEN degisince
+    yeniden hesaplatir; ayni degerle kayit hicbir sey yazmaz.  Kendi
+    ayar degisikliginiz kendi programinizda tum sayfalari yeniden
+    yuklemez.
+  - GIRIS: her bilgisayar o bilgisayarda en son giren kullaniciyi
+    hatirlar ve onu secili getirir (kayit yoksa Windows kullanici adi).
+
+============================================================
+2.0.1  -  SURUM NUMARASI, B1000 PANELI, AGDA HIZ
+============================================================
+
+SURUM NUMARASI (bundan sonra)
+  Ust cubukta WIP TRACKER altinda yazar (v2.0.1).
+    x.y.Z  kucuk duzeltmeler        (2.0.1 -> 2.0.2)
+    x.Y.0  orta buyuklukte guncelleme (2.0.x -> 2.1.0)
+    X.0.0  tamamen yenileme: arayuz / mantik (2.x -> 3.0.0)
+  Bu surum v74'ten sonra gelir (eski sayilar v61 ... v74).
+
+Hesaplar, tablolarin sayilari ve Excel ciktilari DEGISMEDI.
+
+  - AGDA HIZ: acik programlarin 40 sn'de bir yazdigi oturum kaydi artik
+    veri dosyasinin YANINDAKI ayri dosyaya yaziliyor:
+        rw_data_sessions.db   (rw_data.db ile ayni klasorde, kendiliginden
+                               olusur; o klasore yazma izni gerekir)
+    Eskiden her kayit veri dosyasini degistirdigi icin herkesin bellek
+    onbellegi silinip tablolar agdan bastan okunuyordu.  Not: eski
+    surumu acik olanlar, guncelleyene kadar admin'in oturum listesinde
+    gorunmez.
+  - Forecast da acilista arka planda hazirlaniyor (MRB ve B1000 gibi).
+  - B1000: makineye tiklayinca "Last loaded" (son baglanan parca) ve
+    "Waiting for this machine" (o makinenin grubunu bekleyen parcalar).
+    Kesim olmayan makinede son baglanan seri gri yazilir.
+  - RW: secili seri Waterfall'daki gibi belirgin mavi, kenar cizgili.
+  - Gunduz modunda Waterfall Route kartinin koyu kalmasi duzeldi.
+
+
+============================================================
+v74  -  .XLS OKUMA, FILTRE RENKLERI, KISIYE TEMA
+============================================================
+
+Hesaplar, tablolarin sayilari ve Excel ciktilari DEGISMEDI.
+
+  - ".xls" adli ama ici farkli dosyalar artik okunuyor:
+      * ici aslinda .xlsx olan dosya (openpyxl adina bakip "use xlrd"
+        diyordu)
+      * SAP'in sekmeyle ayrilmis metin ".xls"leri (UTF-16 / Turkce)
+      * "XML Spreadsheet 2003" ".xls"leri
+    Hicbirine uymayan dosyada "Excel'de acip .xlsx kaydedin" mesaji.
+  - Gece modunda filtre acilir pencerelerinin acik renk kalmasi (v73)
+    duzeldi: her acilir pencere acildigi anda guncel temayi aliyor.
+  - Gece / gunduz secimi kisinin hesabina kaydediliyor; hangi
+    bilgisayardan girerse girsin kendi temasi geliyor.
+
+
+============================================================
+v73  -  SADE EKRAN, MODUL AYIRICI, HIZLI TEMA
+============================================================
+
+Hesaplar, tablolarin sayilari ve Excel ciktilari DEGISMEDI.
+
+DUZELTMELER
+  - Waterfall'in titreyip kilitlenmesi duzeldi (tablo yuksekligi
+    surekli yeniden hesaplaniyordu).
+  - Muhendis filtresi her sayfada filtre cipinde gorunuyor.
+  - Program onceki oturumun filtrelerini geri getirmiyor: her acilista
+    bu hafta ve kisinin kendi muhendisi.
+  - Gunduz modunda siyah kalan filtre icleri icin tema renkleri artik
+    programa acikca veriliyor (Windows koyu mod acikken de).
+
+HIZ
+  - Gece / gunduz gecisi yaklasik 3 kat hizli; arkadaki sayfalar
+    acilinca boyaniyor.
+  - B1000 Edit plan: surukleme ve gezinme cok daha akici.
+
+MODULLER
+  - Moduller arasinda suruklenebilir ayirici: biri daralinca digeri
+    buyur.  Tum moduller ayni anda acikken hepsi ekrana sigiyor.
+
+SADELESTIRME
+  - Sayfa adi altindaki aciklamalar kaldirildi, filtreler inceldi.
+  - Waterfall: IN WIP / WAITING / IN WORK / AVG LEAD baslik satirinda
+    ince; Zoom route kartinda; sutun basliklari kucuk.
+  - Forecast: OVER CAPACITY / WORST / MACHINES / BACKLOG kutulari ve
+    alttaki uzun aciklama kaldirildi.
+  - B1000: tepedeki kapasite / tezgah bilgisi ve toplam kutulari yok.
+  - RW ve Waterfall: TECO, SCRAP vb. satirlar not gibi hafif boyali.
+
+EKLER
+  - Tum sayfalarda flag filtresinde REMOVED (sistemden dusulmus scrap);
+    rengi kirmizinin koyu bordo tonu.
+  - MRB/Scrap/TECO giris tarihinde takvim.
+  - DATA & SETTINGS > Load data: eski .xls okuyucusunun (xlrd) bu
+    programda olup olmadigi yaziyor.  Derleme komutu: bolum 3.
+
+
+============================================================
+v72  -  HIZ, KAYDIRMA, KISIYE GORE FILTRE
+============================================================
+
+Hesaplar, tablolarin sayilari ve Excel ciktilari DEGISMEDI.
+
+HIZ
+  - MRB/Scrap/TECO ve B1000 Live: program acilinca ve veri degisince
+    agir hesaplar arka planda (ekrani dondurmadan) hazirlaniyor; sayfa
+    acilinca hazir geliyor.
+  - Ortak dosya mesgulken ozet kaydi artik beklemiyor (eskiden 45 sn'ye
+    kadar donabiliyordu); kaydedilemeyen ozet sonra tek seferde yaziliyor.
+
+KAYDIRMA / MODULLER
+  - Tablo sonuna gelince fare tekerlegi sayfayi asagi cekmiyor.
+  - Tek modul acikken sayfa pencereye tam sigiyor, sadece tablo kayiyor.
+  - Ikinci modul acilinca asagiya degil YANINA geliyor; cok modulde
+    sayfa saga sola kaydirilabiliyor.
+
+DIGER
+  - Her hesap PART listesinde (Engineer) kendi adina parca varsa tum
+    sayfalar o muhendisle aciliyor; atamasi olmayanlar ve mudur / lider
+    / sef ALL ile.  Reset all bu baslangica doner.  Isim eslesmesi:
+    "Efe Yaltirikli", "E. YALTIRIKLI" veya kullanici adi (Turkce harf ve
+    nokta fark etmez).
+  - MRB/Scrap/TECO: MRB kutusuna basinca girisi yapilmis MRB'ler de
+    listeleniyor.
+  - Custom Analysis: "Fit uses the room..." yazisi kaldirildi.
+  - Sol alttaki kisi dugmesi kaldirildi (sag ustteki kaldi).
+  - Ikon programin icine gomuldu; ortak klasorden calisinca da pencerede
+    ve gorev cubugunda gorunur.
+
+
+============================================================
+v71  -  HIZ, GECE/GUNDUZ VE ALAN DUZENLEMELERI
+============================================================
+
+Hesaplar, tablolarin sayilari ve Excel ciktilari DEGISMEDI.
+
+DUZELTMELER
+  - Gece/gunduz degisince RW Analysis, Cause ve Waterfall tablolarinda
+    parca ve seri numaralari kayboluyordu (beyaz kaliyordu) - duzeldi.
+  - RW: kutular sadece satirin en solundaki ok ile acilip kapaniyor;
+    parca / seri numarasina tiklamak artik kapatmiyor.
+  - MRB/Scrap/TECO: bir kutuya (TECO, SCRAP...) tiklayinca o turden
+    kapatilanlar da ayri baslikla listeleniyor (SCRAP'ta "REMOVED",
+    TECO'da "FIXED").  Boylece hangi seriyi kaldirdiginiz gorunuyor.
+  - Bottleneck: bos yere gelince cikan "waiting ..." aciklamasi kaldirildi.
+
+HIZ
+  - MRB/Scrap/TECO, Bottleneck ve B1000 daha hizli aciliyor; agir
+    hesaplar bir kez yapilip saklaniyor, program yeniden acilinca da
+    tekrar hesaplanmiyor.
+  - B1000 not / isaret degisince bastan cizilmiyor.
+  - Sayfa acilirken / hesaplarken ortada "Opening ..." yukleniyor
+    isareti cikiyor.
+
+ALAN
+  - Waterfall: operasyon hucreleri kare ve kucuk; Status sadece "RUN";
+    Serial / Last op / Status / Waiting / Remaining basliklari dik;
+    rework kutusunda tam sayi (detay uzerine gelince).  Ctrl ile
+    kucultunce tablo asagi dogru daha cok satir gosteriyor.
+  - Custom Analysis: Daily report ve Weekly target daha kucuk, ana
+    tabloya daha cok yer.
+  - Pencere basliginda surum yazmiyor, sadece "WIP TRACKER".
+  - EXE adi hep "WIP TRACKER" (derleme komutu asagida, bolum 3).
+
+
+============================================================
+v70  -  DUZELTMELER VE KUCUK EKLER
+============================================================
+
+Hesaplar, tablolarin sayilari ve Excel ciktilari DEGISMEDI.
+
+DUZELTMELER
+  - Bosta kapanma: program fare/klavye hareketini goremiyordu, bu
+    yuzden calisirken de 5 dakikada "I'm here" soruyordu.  Artik her
+    hareket (fareyi sadece gezdirmek dahil) sayiliyor.
+  - Waterfall: lead time acikken tek operasyonluk gruplarda saat
+    gorunmuyordu - artik gorunuyor.
+  - Bottleneck: secilen tarihin son gunu uzun gorunuyordu - artik diger
+    gunlerle ayni genislikte.
+  - B1000 Live: gezinme / kaydirma ve makine secme cok daha hizli.
+  - Ctrl + fare tekerlegi ile buyutme / kucultme her sayfada calisiyor.
+  - Sayfa alt basliklari gereksiz yere iki satira bolunmuyor.
+
+EKLER
+  - RW: notlar artik satirin tamamini boyamiyor; TECO / SCRAP gibi
+    seri numarasinin yaninda renkli cizgi, seri numarasi notun renginde
+    ve satirda cok hafif bir renk.
+  - RW: Reject op (veya baska bir sutun) ile gruplayinca isaret/not
+    seri numarasinin yaninda kaliyor; her grubun TOTAL satirinda Serial
+    no altinda farkli seri sayisi ("7 serials") yaziyor.
+  - RW: seri numarasina gore gruplayinca gruplar arasinda daha belirgin
+    ayirici cizgi.
+  - Forecast: fabrika haftalari arasinda Bottleneck'teki gibi ince koyu
+    ayirici sutun.
+  - Bottleneck: sayi olan hucrenin uzerine gelince o sayiya giren seri
+    numaralari listeleniyor (60'a kadar, fazlasi "+ N more").
+
+
+============================================================
+v69  -  HER SAYFA YENI DUZENDE, DAHA AKICI, TEMIZLENMIS KOD
+============================================================
+
+Hesaplar, tablolarin icerigi ve Excel ciktilari DEGISMEDI.
+Degisen: sayfalarin gorunumu ve kullanimi.
+
+ORTAK
+  - Sol ust: WIP TRACKER, altinda "created by".
+  - Bloklarin arasindaki cizgi suruklenerek genislikler ayarlanir.
+  - Yan paneller gizlenebilir; ana alan bosalan yere buyur.
+  - Renk olcegi her sayfada ayni: yesilden kirmiziya, duz renk,
+    hucre yazilari beyaz; cok yuksek degerler mor.
+  - Time filtresinde takvimden tarih secilir.
+  - Dar pencerede (1280 / 1024) hicbir sayfa yana kaymaz; satirlar
+    alta sarar.
+
+MRB / SCRAP / TECO
+  - Liste turune gore basliklarla gruplu, son op ve bekleme gunu var.
+  - Ust kutulara tiklayinca liste o ture suzulur.
+
+RW ANALYSIS
+  - Seri numarasi (veya baska alan) kutulari: hepsini ac / kapa,
+    kapali kutuda son kayit + toplam saat.
+  - Basliga tiklayinca sutun filtresi; genel toplam filtreye gore.
+  - "Fit to width": tum sutunlar ekrana sigar; kapaliyken tam yazi,
+    yana kaydirarak bakilir.
+
+WATERFALL
+  - Kisa durum kodlari (RUN / WAIT / SHIP ...), fareyle tam yazi.
+  - Yumusak, yuvarlak hucreler; rework kutusu koyu kirmizi.
+  - Lead time / queue / flow efficiency modulu tablonun yaninda acilir.
+
+BOTTLENECK
+  - Ayni gunun W ve F kutulari tek cercevede.
+  - Iki modul yan yana, biri kapaninca digeri buyur.
+
+FORECAST
+  - Tum secenekler "Forecast settings" menusunde, secilenler etiket.
+  - 4 ozet kutusu, her gun bir yuk cubugu (%100 kesik cizgi).
+  - Machines / people sagda acilir; vardiya tablosu da orada.
+
+CAUSE OP ANALYSIS
+  - 4 toplam kutusu; Per part tablosunda TOTAL satiri.
+  - Cause op trend modulu kaldirildi; acilista yalniz
+    "Overall cause op share" acik.
+
+CUSTOM ANALYSIS
+  - Pano + sagda Daily report / Weekly target (gizlenebilir).
+  - Fit bos alana gore: en az %70, en cok %180.
+  - Duzenleme ekrani sayfanin icinde, 3 sutun; "Quick assign" ile
+    adimlara tiklayarak grup verilir, gruplar surukleyerek siralanir.
+
+B1000
+  - Yumusak tezgah cizimi (kayitli plan dosyasi degismez).
+  - Canli gorunumde ozet kutulari ve sagda makine paneli.
+  - Duzenlemede okunur kutuphane (cizimli, aramali).
+
+DATA & SETTINGS
+  - Solda DATA / SHOP / ADMIN menusu, sagda tek bolum.
+  - Veri setleri kart olarak; dosyalar surukle-birak ile yuklenir.
+
+AKICILIK
+  - Buyuk tablolarda kaydirma yaklasik iki kat hizli.
+  - Kapatilip acilan modul eski boyunda sikisik kalmaz.
+
+TEMIZLIK
+  - Kullanilmayan kod parcalari ve gereksiz importlar silindi.
+
+COKLU KULLANICI VE ADMIN OZELLIKLERI
+  - Bakim modu, bosta kapanma suresi, baskalarinin oturumunu kapatma,
+    kullanici rolleri, hesap acma/kapama, sifre sifirlama, kullanici
+    yedegi ve B1000 plan kaydi: tiklandigi anda kisinin GUNCEL rolu
+    dosyadan okunur; admin degilse yapilmaz.
+  - Baska bilgisayardan rolu dusurulen ya da hesabi kapatilan kisi,
+    programi kapatmasini beklemeden en gec 40 saniyede bunu gorur
+    (hesap kapatildiysa program kendini kapatir).
+  - Kapatilmasi istenen kopya, dosya mesgul olsa da kapanir; ikinci bir
+    "kapaniyor" penceresi acilmaz.
+  - Biri buyuk bir yukleme yaparken diger kopyalarin ekrani artik
+    donmaz (arka plan kontrolu o turu atlar).
+  - Ayni anda giris yapan kisiler "database is locked" hatasi almaz;
+    oturum, son giris, rol ve kapatma istegi yazilari kisa bir sure
+    bekleyip yazilir.
+
+----------------------------------------------------------------------
+ONCEKI SURUMLERIN NOTLARI (v67 ve oncesi; v68 = ilk Qt surumu) asagida aynen duruyor.
+----------------------------------------------------------------------
+
+1) DOSYALARI .py YAPIN
+  Zip icindeki kaynak dosyalar .txt uzantili gelir (mail ekinde .py
+  bazen engellenir).  IKISI HARIC hepsini .py yapin:
+  OKU.txt ve HESAPLAMA_MANTIGI.txt kaynak kod degil, okunacak yazidir -
+  onlar .txt kalir.
+
+  Windows - PowerShell (zipi actiginiz klasorde):
+    Get-ChildItem *.txt |
+      Where-Object { $_.Name -notin 'OKU.txt','HESAPLAMA_MANTIGI.txt' } |
+      Rename-Item -NewName { $_.Name -replace '\.txt$','.py' }
+
+  Windows - Komut Istemi (cmd):
+    ren *.txt *.py
+    ren OKU.py OKU.txt
+    ren HESAPLAMA_MANTIGI.py HESAPLAMA_MANTIGI.txt
+
+  Mac - Terminal:
+    for f in *.txt; do
+      case "$f" in
+        OKU.txt|HESAPLAMA_MANTIGI.txt) ;;
+        *) mv "$f" "${f%.txt}.py" ;;
+      esac
+    done
+
+  Uzantilar gizliyse yeniden adlandirma karisir:
+  Dosya Gezgini > Gorunum > "Dosya adi uzantilari" kutusunu isaretleyin.
+
+  16 adet .py olmali.  Calistirilan dosya: wip_tracker_app.py
+  (Son ikisi KURTARMA.py ve NEDEN_BEKLIYOR.py - uygulamanin
+   parcasi degil, ayri araclar.  PyInstaller derlemesine girmezler.)
+
+  Zip dosyasinin adinda surum numarasi yazar:
+    WIP_TRACKER_v67_source_txt.zip
+
+2) DERLEME (Windows, cmd):
+  py -m PyInstaller --onedir --windowed --icon=wip_icon.ico ^
+    --add-data "wip_icon.ico;." --name WIP_TRACKER wip_tracker_app.py
+
+  PyInstaller yuklu degilse once:
+    py -m pip install pyinstaller
+
+  Not: paket adi kucuk harfle kurulur (pip install pyinstaller) ama
+  modul adi buyuk harflidir - "py -m PyInstaller" olarak cagirilir.
+
+2b) DERLEME NEREYE NE BIRAKIYOR  -  ve ne temizlenmeli
+
+  Her derleme SU UC SEYI olusturur ve AYNI ISIMLE HER SEFERINDE
+  USTUNE YAZAR - yani eski surumler kendiliginden birikmez:
+
+    dist\WIP_TRACKER\    calisan uygulama.  Dagittiginiz sey bu.
+    build\WIP_TRACKER\   ARA DOSYALAR.  Uygulamanin calismasi icin
+                          gerekli DEGIL, sadece derleme sirasinda
+                          kullanilir.  Yuzlerce MB olabilir.
+    WIP_TRACKER.spec     derleme tarifi.  Kucuk, kalabilir.
+
+  BIRIKENLER
+
+    build klasoru     her derlemede ustune yazilir ama temizlenmez.
+                      Istediginiz zaman silebilirsiniz:
+                          rmdir /s /q build
+                      Bir sonraki derleme yenisini kurar (biraz daha
+                      uzun surer, hepsi o kadar).
+
+    PyInstaller onbellegi   islenmis kutuphane dosyalarini saklar ve
+                      zamanla buyur.  Yeri:
+                          %APPDATA%\pyinstaller
+                      Bakmak icin:
+                          explorer %APPDATA%\pyinstaller
+                      Silmek guvenli; sadece ilk derleme yavaslar.
+
+    __pycache__       Python'un derlenmis ara dosyalari.  Birkac MB,
+                      onemsiz.  Istenirse:
+                          rmdir /s /q __pycache__
+
+  SILMEYIN
+    dist\WIP_TRACKER\  -  calistirdiginiz/dagittiginiz surum burada.
+    Arsivledginiz eski surum kopyalari - onlari siz olusturdunuz,
+    PyInstaller'in haberi yok.
+
+  NE KADAR YER TUTUYOR, BAKMAK ICIN (PowerShell):
+    Get-ChildItem build,dist -Recurse -EA SilentlyContinue |
+      Measure-Object Length -Sum |
+      ForEach-Object { "{0:N0} MB" -f ($_.Sum/1MB) }
+
+TRAVELER BICIMI (sizin kullandiginiz)
+  A sutununda parca adi tek basina, hemen altinda basliklar,
+  sonra operasyon satirlari.  Bir sonraki parca adi yeni blok.
+
+  Sutunlar BASLIK METNINDEN taninir, SIRA ONEMLI DEGIL:
+    +  ya da  Operasyon / Op No     -> operasyon numarasi
+    (2.1.3: "-" / Oncul sutunu artik GEREKMEZ ve okunmaz - her
+     operasyonun lead time'i bir onceki operasyondan olculur.  Eski
+     dosyada durursa sorun degil, atlanir.)
+    Operasyon Tanim / Aciklama      -> tanim
+    Standart Sure / Std Saat        -> SAAT cinsinden
+    Tezgah Grubu / Machine Group    -> COMP'un 3. sutunundaki sinif
+    Cikar / Haric / Pasif           -> X, EVET, 1 yazilan satir
+                                       rotadan cikarilir
+
+  Cikarilan operasyon silinmez: analizlerin kullandigi rotaya
+  girmez ama EDIT TRAVELER ekraninda gorunur ve geri acilabilir.
+
+  Tezgah grubu adi COMP sinifiyla ayni yazilmali (LIECHTI, MAZAK,
+  CMM ...); veriyi birlestiren sey bu isim.
+
+HIZ: dist\WIP_TRACKER klasorunu her bilgisayarin kendi diskine
+  kopyalayin, sadece rw_data.db ortak klasorde kalsin.
+  (Acilis suresi icin en buyuk fark bu - ayrintisi v41 bolumunde.)
+
+PARCA NEREDE  -  KURAL  (v40)
+  1) Parca, ROTADA EN ILERI olan ve zaman girisi yapilmis
+     operasyondadir.  TARIH BUNU BELIRLEMEZ.
+  2) O operasyona girilen MAKINE SURESI (Activity to conf, U sutunu)
+     toplami, operasyonun STANDART SURESINE ulastiysa ya da gectiyse
+     operasyon TAMAMLANMISTIR; parca bir sonraki operasyonda
+     BEKLIYORDUR  ->  WAITING
+  3) Ulasmadiysa parca hala o tezgahta kesiliyordur  ->  PROCESSING
+  4) Bir operasyondan SONRA giris varsa, onceki operasyon kendi
+     standart suresine ulasmamis olsa bile tamamlanmistir.
+
+  BUGUNUN TARIHI VE SAATI BU HESABA GIRMEZ.  Gecen sure yalnizca
+  PREDICTED POS icin kullanilir; onun disinda hicbir seyi degistirmez.
+  (Once giriyordu: bir operasyon gece boyunca kendi kendini
+  "bitiriyor" ve tezgahta duran parca WAITING gorunuyordu.)
+
+  ORNEK
+    70 operasyonuna giris yapilmis (standardin alti ya da ustu,
+    farketmez), sonra 80 operasyonuna 2 giris: 7.5 + 7.5 = 15 saat.
+    80'in standart suresi 26 saat.
+    -> 70 tamamlanmistir
+    -> parca 80 operasyonunda, 11 saat makine suresi kalmistir
+    -> 26 saate ulasinca 80 biter ve parca 90'da beklemeye baslar
+
+  TOLERANS su an KAPALI (wip_core.txt icinde STD_TOLERANCE = 0.0).
+
+NEREDE GORUNUYOR
+  WATERFALL / WIP ANALIZ  -  uc renk:
+     YESIL    tamamlanmis operasyonlar
+     TURUNCU  parcanin uzerinde oldugu operasyon; hucrede "15/26"
+              gibi girilen/standart yazar, altinda dolan cubuk
+              STATUS sutunu: "Processing 15/26h"
+     SARI     inmis ve sonraki operasyonu bekliyor; "waiting" yazar
+
+  REMAINING  sadece LEAD TIME: parcanin durdugu yerden rota sonuna
+             kadar gecmisteki ortalama gecen surelerin toplami.
+             Standart sure buna eklenmez.
+
+  PREDICTED POS  saatin kullanildigi tek yer.  Parca, son
+             dokunulmasindan bu yana gecen sureyi adim adim lead
+             time ortalamalarina harcayarak ileri tasinir.
+
+  B1000 LIVE  tezgahin uzerinde O AN KESILEN parcanin seri numarasi
+             yazar.  Operasyonunu bitirmis ama sonrasinda hic giris
+             olmamis parcalar da o tezgahta durur (daha inmemistir);
+             kosede "N done" olarak sayilir.  Bir tezgahta ayni anda
+             en fazla bir parca kesilir - Ultrapolish haric.
+
+  Standart suresi girilmemis parcalar eskisi gibi okunur: bir giris
+  varsa o operasyon yapilmis sayilir.
+
+AYRICA DUZELTILDI
+  B1000 LIVE'da serilerin buyuk kismi (gercek veride 800 serinin
+  567'si) plana hic dusmuyordu.  "En son nerede goruldu" sorgusu
+  MAX(tarih) ve MAX(id) degerlerini AYRI AYRI hesapliyordu; ikisi
+  ayni satira denk gelmeyince o seri tamamen kayboluyordu.
+
+BEKLEME ALANLARINI TEZGAH GRUBUNA BAGLAMA
+  Bir bolge secip SELECTED panelindeki MACHINES satirina tezgah
+  grubu adlarini yazin, virgulle ayirin:
+
+        MACHINES:  MAZAK, CMM
+
+  Grup adlari COMP'un sinif sutunundan gelir.  Satirin altinda o
+  gruptaki tezgah numaralari yazar; yazdiginiz ad COMP'ta yoksa
+  "NOT IN COMP" der, boylece hicbir sey cekmeyen bir bolge fark
+  edilmeden kalmaz.
+
+  Bolge, SIRADAKI operasyonu o gruba giden serileri toplar.  Hangi
+  operasyonun hangi gruba gittigi once traveler'daki TEZGAH GRUBU
+  sutunundan, orada yoksa o operasyonu fiilen calistiran tezgahin
+  COMP sinifindan bulunur - traveler yarim doldurulmus olsa da
+  parcalar dogru alana duser.
+
+  WAITS FOR (operasyon listesi) hala duruyor; grup yazilmissa o
+  oncelikli, yazilmamissa operasyon listesi kullanilir.
+
+  Tezgahta halen islenen parca hicbir bekleme alanina dusmez -
+  daha beklemeye baslamamistir.
+
+PLAN DUZENLEMEDE TIKLAMA
+  Bir ogeye tiklamak artik onu yerinden oynatmiyor.  Once her
+  basista surukleme baslatiliyordu; elin 1-2 piksellik titremesi
+  bunu tetikliyor ve izgaraya oturtma ogeyi kaydiriyordu.  Artik
+  imlec 4 pikselden fazla yol almadan hicbir sey tasinmiyor.
+
+  Ayrica her yeni sembol ayni koseye (40,40) birakiliyordu; uc
+  tane eklerseniz ucu ust uste yigiliyordu.  Simdi her yeni sembol
+  bos bir yere konuyor.  Kopyalama da ayni sekilde.
+
+TRAVELER'DA AYNI OPERASYON IKI KEZ GECERSE
+  Tek operasyon sayilir ve STANDART SURELERI TOPLANIR.
+  Ornek: 80 numarali operasyon iki satirda, 5 sa ve 7.5 sa
+         -> rotada tek 80 satiri, standart suresi 12.5 sa
+  Tanim ilk satirdan alinir.  Tezgah grubu ilk satirda bossa
+  sonraki satirdan doldurulur.
+
+B1000 PLANINDA BOLGE = KAP
+  Bir bekleme bolgesinin ICINE koydugunuz tezgahlar o bolgeye
+  aittir; bolgeyi surukledginizde hepsi birlikte gelir.  Uyelik
+  cizimden okunur - kutunun icinde duran onundur - yani plani
+  nasil dizerseniz oyle kalir, ayrica liste tutmaniz gerekmez.
+  Bolgeyi secmek icin bos bir yerine, icindeki tezgahi secmek
+  icin uzerine tiklayin.
+
+  Tezgah sembollerinde artik hem ad hem WC KODU yazili.  Kodu
+  girilmemis tezgahta kirmizi "no WC" uyarisi cikar - o sembol
+  LIVE'da hicbir veri gostermez.
+
+PLANI KIMLER DEGISTIREBILIR  (v41'de sadelesti)
+  Sadece admin.  Admin olmayanlar LIVE'da gorur, EDIT PLAN
+  dugmesi pasiftir ve yaninda "view only - admin edits the plan"
+  yazar.
+
+  LOCK PLAN / UNLOCK PLAN KALDIRILDI.  Kimin degistirebilecegi
+  sorusunu zaten HESAP cevapliyordu; kilit bunun uzerine binen
+  ikinci bir kapiydi ve pratikte sadece admini kendi planindan
+  disarida birakiyordu.  Eski veritabanlarindaki kilit kayitlari
+  acilista otomatik siliniyor, elle bir sey yapmaniza gerek yok.
+
+  Sayfalar kullanici girisinden ONCE kuruluyor, bu yuzden admin
+  kontrolleri girisin ardindan yeniden ciziliyor - admin olsaniz
+  bile EDIT PLAN pasif gorunmesi boyle duzeldi.
+
+  COLOUR / DUPLICATE / REMOVE dugmeleri sadece EDIT modunda
+  gorunur ve hepsi admin kontrolunden gecer.
+
+PLAN DUZENLEME  (v16)
+  TEZGAH DONDURME
+    Bir ogeyi secip ROTATE 90 (ya da klavyeden R) ile ceyrek tur
+    dondurun.  Sembolle birlikte EN VE BOY da yer degistirir, yani
+    tezgahin kapladigi alan gercekten donuyor.  Aci planla birlikte
+    kaydedilir.
+
+  30 TEZGAHI TEK TEK KOYMAYIN
+    ALL MACHINES FROM DATA dugmesi, veride gecen her tezgahi (en cok
+    is goren once) plana izgara halinde birakir; kac tane istediginizi
+    sorar.  Kodu ve adi dolu gelir, siz sadece yerlerine surukleyip
+    SAVE PLAN dersiniz.  Zaten planda olan tezgahlar tekrar eklenmez.
+
+    Toplu birakilan semboller kucuk (120x96) gelir - kutuphanedeki
+    dogal boyut (280x256) atolyenin altida biri kadar ve 30 tezgah
+    yan yana sigmiyor.  Istediginizi kosesinden buyutebilirsiniz.
+
+  EKRANA SIGDIR
+    ZOOM artik %10'a kadar iniyor (once %30 idi, atolyenin tamami
+    ekrana sigmiyordu).  Yanindaki FIT dugmesi plani pencereye tam
+    oturacak orana ayarlar.
+
+TEZGAHTA SADECE KESILEN PARCA GORUNUR
+  Once tezgahin uzerindeki sayi, orada EN SON islem gormus TUM
+  serileri sayiyordu - kalabalik bir tezgahta yuzlerce parca eder ve
+  "bu tezgahta iki parca var" gibi okunurdu.  Oysa o parcalar
+  tezgahta degil, orada bitirip SIRADAKI operasyonu bekliyorlar.
+
+  Artik tezgahin uzerinde sadece O AN KESILEN parcanin SERI NUMARASI
+  yazar; bos tezgahta hicbir sey yazmaz.  Sira bekleyenler tezgaha
+  hic konmaz.
+
+  Bekleyen parcalar, siradaki operasyonunu ustlenen BEKLEME ALANINDA
+  gorunur (MACHINES satirina tezgah grubu yazilan bolge).  Boyle bir
+  bolge tanimlanmamissa o parca planda gorunmez; ust satirdaki bilgi
+  yazisi kac parcanin beklemede oldugunu ve kacinin bir bekleme
+  alaninda oldugunu soyler.
+
+MAKINE SURESINE GECIS  (v18)  -  VERIYI YENIDEN YUKLEYIN
+  Parcanin nerede oldugu artik ISCILIK degil MAKINE SURESI uzerinden
+  hesaplaniyor.
+
+    iscilik      SAP "Toplam Iscilik"        (R sutunu)
+    MAKINE SURESI SAP "Activity to conf"     (U sutunu)   <- kullanilan
+
+  Neden: bir tezgahta iki operator calisirsa tek bir kesim icin iki
+  kat iscilik girilir.  Iscilige bakinca parca operasyonu gercekte
+  oldugundan hizli bitirmis gorunuyor ve erkenden "waiting"e
+  dusuyordu.  Ornek kayit: 20 saatlik operasyon, iscilik 27.8 sa
+  (bitti sayilir) ama makine suresi 17.9 sa (hala tezgahta).
+
+  ! Bu degisiklik icin SAP VERISINI YENIDEN YUKLEMENIZ gerekir -
+    eski kayitlarda U sutunu hic okunmamisti.  Yeniden yukleyene
+    kadar program eski kayitlarda iscilik degerine duser, yani
+    calismaya devam eder ama eski sonucu verir.
+
+  Iscilik verisi silinmiyor, yaninda saklanmaya devam ediyor.
+
+WIP REMAINING ARTIK SADECE LEAD TIME
+  REMAINING sutunu, parcanin durdugu yerden rota sonuna kadar
+  gecmisteki ORTALAMA GECEN SURELERIN toplamidir.  Adimin standart
+  suresi buna eklenmiyor - standart sure is miktaridir, gecen sure
+  degildir; ikisini toplamak ikisi de olmayan bir sayi veriyordu.
+
+ADD (EKLEME) ARTIK GUN BAZINDA DEGISTIRIR
+  Once satirlar alan alan karsilastiriliyordu: SAP'de duzeltilmis bir
+  giris "farkli" sayilip eskisinin yanina ekleniyor, kimsenin bakmadigi
+  bir alani degismis satir ise iki kez yaziliyordu - ve bazi veriler
+  kayboluyordu.
+
+  Artik ADD yaptiginizda dosyadaki TARIHLER okunur, o gunlere ait eski
+  kayitlar silinir ve dosya oldugu gibi yazilir.  Sonucta:
+    - o gunler dosyanin dedigi gibi olur
+    - diger gunlere dokunulmaz
+    - ayni dosyayi iki kez eklemek hicbir sey degistirmez
+    - parca parca eklemek, tek seferde yuklemekle ayni sonucu verir
+
+  Bunun icin her giris artik kendi saatleri ve tam zaman damgasiyla
+  saklaniyor; waterfall'in operasyon basina toplami her yuklemeden
+  sonra bu satirlardan yeniden hesaplaniyor, yani her zaman tutarli.
+
+v20 DUZELTMELERI
+
+  TEZGAHIN UZERINDE ARTIK HER ZAMAN BIR PARCA YAZAR
+    Once sadece KESILEN parcanin adi yaziliyordu.  Operasyonunu
+    bitirmis ama sonrasinda hic giris olmamis parca (yani tezgahtan
+    daha inmemis olan) detay listesinde gorunuyor ama tezgahin
+    uzerinde yazmiyordu.  Artik o tezgaha en son giris yapilan parca
+    yazar; operasyonu bitmisse altinda "done" der.  Yanindaki +N,
+    ayni tezgahta duran diger parcalarin sayisidir.
+
+  SERI NUMARASININ ALTINDA PARCA ADI
+    2564M10G02 -> M10 olarak kisaltilip seri numarasinin altina
+    yazilir.  Detay tablosundaki PART sutunu da bu kisa adi gosterir.
+
+  B1000 ILE WATERFALL AYNI OPERASYONU SOYLUYOR  (mantik hatasi)
+    Iki sayfa parcanin yerini farkli buluyordu:
+      - B1000 sadece `ops` tablosunu okuyordu; bir serinin en son
+        kaydi REWORK ise (gercek veride 800 serinin 157'si) o kayit
+        hic gorulmuyor, parca daha eski bir operasyonda gosteriliyordu.
+      - Waterfall rotada EN ILERI operasyonu, B1000 ise EN SON TARIHLI
+        olani aliyordu; rework icin geri donmus bir parcada bu ikisi
+        farkli cikiyordu.
+    Artik ikisi de ayni kurali kullaniyor: en son zaman girisi, esitlik
+    halinde daha ileri operasyon.  Test: 792 serinin 792'sinde ayni
+    operasyon.
+
+  PREDICTED POS, ilk operasyonunda olan parcayi da tasiyabiliyor
+  (once en az bir operasyonun bitmis olmasi gerekiyordu).
+
+v21 PLAN DUZENLEME
+
+  CIZIM ALANI ARTIK SABIT DEGIL
+    Siyah zemin, yerlestirdiginiz her seyi kapsayacak sekilde kendini
+    buyutur.  Bir bolumu kenarin otesine surukleyebilirsiniz, plan
+    onunla birlikte genisler.
+
+  BOLGE, ICINDEKILERLE BIRLIKTE KOPYALANIR
+    DUPLICATE, bir bolumu icindeki tezgahlarla beraber kopyalar ve
+    tezgahlar kopyada da ayni yerlerinde durur.  (Tasima zaten boyle
+    calisiyordu.)
+
+  YAZILAR ZOOM ILE KUCULUR
+    Tum plan yazilari zoom oranina gore olceklenir; okunamayacak kadar
+    kuculdugunde cizilmez.  Once sabit puntoydu ve uzaklastikca
+    sembolleri ortuyordu.
+
+  KUTUPHANE
+    Liste artik temaya uygun (beyaz degil), daha dar ve daha kucuk
+    puntolu.  "+ ADD TO PLAN" dugmesi kaldirildi - sembole cift
+    tiklamak yeterli.
+
+  KALDIRILANLAR
+    START FROM BASE  (bos tabana donduruyordu, artik gerek yok)
+    COLOUR BY        (her sembol kendi rengiyle cizilir)
+
+  SNAP TO GRID NE ISE YARAR
+    Acikken surukledginiz sembol 8 birimlik gorunmez bir izgaraya
+    oturur; yan yana dizdiginiz tezgahlar kendiliginden hizalanir.
+    Kapatirsaniz sembolu istediginiz tam noktaya birakabilirsiniz -
+    dar bir yere sokustururken ise yarar.
+
+BOLGE BUYUTUP KUCULTME  (v22)
+  Bir bolumun kosesinden cekip boyutunu degistirdiginizde icindeki
+  tezgahlar da AYNI ORANDA buyur/kuculur ve bolgeye gore ayni yerde
+  kalir.  Bolumun disindaki hicbir sey etkilenmez.
+
+  Bolgenin kendisi 8 birimlik izgaraya oturdugu icin oran tam iki kat
+  degil, bir izgara adimi kadar yakin cikar; icindekiler bolge neye
+  gerildiyse tam ona uyar.
+
+"QUEUED" NE DEMEK
+  Bir tezgahta ayni anda tek parca kesilebilir.  Ayni tezgaha bagli
+  birden fazla serinin operasyonu bitmemisse, program EN SON ZAMAN
+  GIRISI yapilani "o tezgahta kesiliyor" kabul eder; geri kalanlar
+  "queued" olur - yani tezgaha bagli, operasyonu yarim, ama su an
+  isleyen baska bir parca var.
+
+  Bir seri queued olur cunku:
+    1) en son zaman girisi o tezgahta yapilmis,
+    2) o operasyonun makine suresi standardin altinda (yani bitmemis),
+    3) ayni tezgahta daha YENI zaman girisi olan baska bir seri var.
+
+  Ayni tezgahta yuzlerce queued goruyorsaniz, o tezgahtan gecmis ama
+  operasyonu standart sureye ulasmamis parcalarin hepsi orada duruyor
+  demektir - genellikle son operasyonda (sevkiyat oncesi) toplanirlar.
+
+PLANDA GEZINME  (v23)
+  Tekerlek tusuna basili tutup surukleyerek plani kaydirabilirsiniz -
+  AutoCAD'deki gibi.  Hem LIVE hem EDIT modunda calisir, plan uzerinde
+  hicbir seyi tasimaz ya da secmez.  Bazi fareler tekerlek tiklamasini
+  sag tus olarak bildirdigi icin sag tus surukleme de ayni isi yapar.
+
+  Tezgah altindaki ilerleme cubugu kalinlastirildi ve o da zoom ile
+  olcekleniyor.
+
+============================================================
+v67  -  MRB / SCRAP / TECO SAYFASI YENI DUZEN VE HIZ
+============================================================
+
+   Yeni dosya yok (16 .py).  Derleme komutu ayni.
+   Veritabanina bir kolon eklenir (elle parca no); ilk acilista
+   kendiliginden yapilir.
+
+   HIZ:
+     - Sayfa ilk acilista listeyi iki kez kuruyordu; artik bir kez.
+     - "Son operasyon" icin her yenilemede buyuk tablo taraniyordu;
+       artik ozet tablosunda (agg_cache) saklaniyor.
+     - Tum seri listesi yalniz SERIAL acilir listesi acilinca okunur.
+     - SERIAL DETAIL kapaliyken seriye tiklamak rework tablosunu okumaz.
+     - HATA DUZELTMESI: bir TECO/MRB kaydi yapildiktan sonra program
+       o oturum boyunca acilis ozetlerini birakip her sayfada buyuk
+       tablolari yeniden okuyordu.  Artik kayit ozetleri bozmaz.
+
+   TOTALS: TECO / MRB / REPAIR kutularinin altinda o turden duzeltilen
+   (FIXED) sayisi; SCRAP altinda REMOVED = sistemden dusulen sayisi.
+   Toplam FIXED sag ustte kalir (REMOVED'lar FIXED'e eklenmez).
+   Yaninda BY PART GROUP: her parca grubunda TECO / MRB / SCRAP /
+   REPAIR / FIXED / REMOVED, sayilar TOTALS renklerinde, tum satirlar
+   gorunur.  Iki kutu ayni boyda; grup cok olunca TOTALS sayilari
+   buyur.  Pencere dar ise tablo TOTALS'in altina gecer.
+
+   LISTE:
+     - Filtrede EXCLUDE FIXED varsayilan secili; kapatilinca FIXED
+       kayitlar listenin sonunda gorunur ("FIXED (MRB)" gibi; sistemden
+       dusulen SCRAP'ler "REMOVED").
+     - Sutunlar: TYPE / PART / SERIAL / REASON / DATE / LAST OP DATE.
+     - Turlere gore bloklar: once tum TECO, sonra MRB, SCRAP, REPAIR,
+       NOTE - girilis tarihinden bagimsiz.
+   MRB / SCRAP PROBABILITY secimleri ve sutunlari kaldirildi (eski
+   kayitlardaki deger silinmez).
+
+   SCRAP artik sonuclandirilabilir: "Removed from system" = sistemden
+   dusuldu, REMOVED olarak sayilir.  (Diger sayfalarin filtrelerinde
+   FIXED turu altindadir.)
+
+   SAG TARAF: OUTCOME her zaman gorunur.  SERIAL DETAIL varsayilan
+   kapali (SHOW SERIAL DETAIL ile acilir) ve yalniz rework gecmisini
+   gosterir.
+
+   MRB ENTERED (girisi yapildi): MRB icin yeni sonuc "Entry done".
+   Girisi yapilan MRB'ler AYRI sayilir: MRB kutusundaki buyuk sayi
+   girisi YAPILMAMIS (kalan) MRB'ler, altinda "ENTERED n".  Rengi morun
+   baska bir tonu.  BY PART GROUP'ta "MRB ENT." sutunu.  Tum sayfalarin
+   TECO/MRB filtrelerinde ayri "MRB ENTERED" dugmesi (MRB dugmesi artik
+   yalniz girisi yapilmamislari kapsar).  "Entry undone" ile MRB'ye
+   doner; Accept / Reject / Repair MRB'deki gibi.
+   TOTALS kutularinda sayilar ve alt satirlar ayni hizada.
+
+   SAG UST: SAP RW / COMP / ENG x PART sayilari yerine
+   "LAST UPDATED gg.aa.yyyy ss:dd" - verinin en son yuklendigi zaman
+   (SAP RW, COMP, ENG x PART, sevkiyat, traveler yuklemeleri).  Sayilar
+   DATA & SETTINGS sayfasinda duruyor.
+
+   ELLE PARCA NO: seri icin veride parca bulunamazsa (cok eski seriler)
+   ENTRY'deki PART kutusuna parca no yazilabilir; veride varsa kutu
+   kilitli ve veriden gelir.  Excel disa/ice aktarimda "PART (BY HAND)"
+   sutunu.
+
+============================================================
+v66  -  KULLANIM IYILESTIRMELERI VE HIZLI ACILIS
+============================================================
+
+   Yeni dosya yok (16 .py).  Derleme komutu ayni.
+
+   ACILIS HIZI (ortak klasor): acilista buyuk tablolari bastan sona
+   okuyan ~20 sorgu vardi (sayimlar, yillar, operasyon adlari, seri
+   listeleri...).  Cevaplari artik veritabaninda kucuk bir ozet
+   tablosunda (agg_cache) duruyor; veri degisince (yukleme, silme)
+   ilk acan bir kez hesaplar, sonrakiler tek satir okur.
+   Ilk acilis (her yuklemeden sonra bir kez) eski hizda kalir.
+
+   SATIR SECIMI: secili satira tekrar sol tiklayinca secim kalkar
+   (tum sayfalar).  Sag tik menusu secimi kaldirmaz.
+   WATERFALL: secili satirin op hucreleri de renklenir, kalin cerceve.
+
+   MRB / SCRAP / TECO:
+     - Seri numarasinin yaninda PART sutunu (veriden).
+     - UNDO / REDO: program acildiktan sonra bu sayfada yapilan
+       SAVE / REMOVE FLAG / RESOLVE geri alinir ve yinelenir.  Seri
+       bu arada baska biri tarafindan degistirildiyse once sorar.
+
+   CUSTOM ANALYSIS: EDIT > OPTIONS > "Serials per box" (varsayilan
+   12).  ZOOM ve FIT %10'luk adimlarla (ara oranlarda yazi
+   kutulardan tasiyordu).
+
+   TARIH FILTRESI: DATES secilince FROM / TO bugun ile baslar.
+
+   RW ANALYSIS: ANALYSIS TYPE icindeki REJECT OP / CAUSE OP
+   dugmeleri kaldirildi (filtre sutun basliklarinda).
+
+   HAFTA BASI DUZELTMESI: PER PAGE ile bir sayfaya kendi hafta basi
+   verildiginde (orn. RW ANALYSIS = Cuma) FW filtresi artik o sayfanin
+   haftasinin TARIHLERINE bakiyor: Cuma'da FW39 = 18-24 Eylul,
+   Pazartesi'de 21-27 Eylul.  Eskiden satirda kayitli (varsayilan
+   hafta basiyla hesaplanmis) hafta numarasi kullaniliyordu.
+   Etkilenen: RW ANALYSIS, CAUSE OP ANALYSIS (haftalik trend dahil),
+   tum parcalar tablosu, FTY.  Diger sayfalar zaten tarihle calisiyordu.
+
+   DATA & SETTINGS: sagdaki ayar kutulari artik SETTINGS serindeki
+   dugmelerle aciliyor (tek seferde bir bolum, acik olan mavi).
+   Sayfa kisaldi, kaydirma hafifledi.
+
+============================================================
+v65  -  PARCA BIRLESTIRME  (1000A10G02 + G03 = "1000A10G02/G03")
+============================================================
+
+   Yeni dosya yok (16 .py).  Derleme komutu ayni.
+
+   DATA & SETTINGS > MERGED PARTS:
+     NEW...  parcalari secin (Ctrl/Shift ile birden fazla).  Ad
+             otomatik olusur (1000A10G02/G03), isterseniz degistirin.
+             ILK secilen parca rotayi, parca grubunu (STG) ve
+             muhendisi verir.
+     EDIT... / DELETE / cift tik ile duzenleme.
+     MERGE ON: her sayfa icin ayri kutu.  Isaretli sayfada birlesik
+     parca TEK parca gorunur (seriler, saatler, bitenler toplanir);
+     isaretsiz sayfada parca numaralari ayri kalir.
+   Liste ortak veritabaninda, herkes ayni birlesik parcalari gorur.
+   Yalniz admin degistirebilir.
+
+   UYARI: birlestirilen parcalarin traveler'lari farkliysa kutunun
+   altinda uyari cikar ve ilk parcanin rotasi kullanilir.
+   Bir parca iki birlesik parcada olamaz; ad baska bir parca
+   numarasi olamaz.
+
+   Sayfalara etkisi (anahtar acikken):
+     RW ANALYSIS / CAUSE OP: parca filtresi, tablolar, tum parcalar
+       listesi ve FTY birlesik parcaya gore.
+     WATERFALL / BOTTLENECK: birlesik parca secilir, iki parcanin
+       serileri ayni rotada birlikte.
+     FORECAST: BY PART satiri tek, is yuku toplam.
+     B1000: filtre listesi (tezgah uzerindeki kisa ad zaten ayni, M41).
+     MRB / SCRAP / TECO: parca filtresi.
+     CUSTOM ANALYSIS: kurulumdaki parca listesi.  Kayitli analizler
+       bozulmaz (eski parca secimleri calismaya devam eder).
+   Ayrinti: HESAPLAMA_MANTIGI.txt BOLUM 10.
+
+============================================================
+v64  -  YENI SAYFA: CUSTOM ANALYSIS  (secilen adimlar uzerinde kanban)
+============================================================
+
+   Yeni dosya: page_acc.py  (16. dosya).  Derleme komutu ayni.
+
+   FORECAST'ten sonra son sekme.  NEW ile analiz kurulur:
+     1) parcalari ekleyin (renk otomatik, COLOUR ile degisir; STG ile
+        haftalik hedef grubuna konur)
+     2) parcayi secin, her adimin yanindaki kutuya START, var olan bir
+        grup ya da yeni bir grup adi yazin.  Bos adimlar yok sayilir.
+     3) grup sirasi (UP/DOWN/RENAME) ve STG basina haftalik hedef
+   Analizler ortak veritabaninda isimle saklanir, herkes gorur.
+
+   KURAL: aradaki operasyonlar yok sayilir.  Yalniz START + secilen
+   adimlarin girisleri okunur, X kurali uygulanir: en ilerideki girisli
+   secilen adim X ile kapandiysa parca SONRAKI secilen adimda bekler,
+   kapanmadiysa o adimda islenir (turuncu rozet).  START'ta olan ya da
+   START'a girmemis parca tabloda yok; son adimi X ile kapanan cikar.
+   Rozet = secilen adimlardaki son giristen beri gecen takvim gunu.
+   Kutu en uzun bekleyen 12 seriyi gosterir, tiklayinca hepsi acilir.
+
+   GUNLUK RAPOR: secilen FW'de her gun son adimi X ile kapanan seri
+   sayisi, parca rengine gore.  HAFTALIK HEDEF: STG basina biten/kalan.
+   Satilmis + TECO/MRB/SCRAP varsayilan gizli (OPTIONS'tan acilir).
+   ZOOM / Ctrl+tekerlek / FIT, surukleyerek kaydirma, OPEN IN WINDOW.
+   Acilisa yuk bindirmez: sekme acilinca hesaplanir.
+   BITEN SAYISI = PART BOTTLENECK 'Finished' ile ayni (BY WIP PART
+   KAPALI, 'Count finished without X' acik): satilmis parcalar da
+   sayilir, gecmis haftalar eksiksiz gorunur.  Son
+   secilen adimi X'siz gecip ileri bir adima giren seri de biter (son
+   giris gunu) ve tablodan cikar.  Ayni adim iki malzeme kodunda
+   girildiyse kayitlar birlestirilir.
+   FW HAFTASI: DATA & SETTINGS > WORKING WEEK > PER PAGE listesinde
+   artik CUSTOM ANALYSIS da var (FORECAST zaten vardi).  CUSTOM
+   ANALYSIS ust seridinde 'week starts <gun>' yazar.  FORECAST gun
+   basliklarinda artik o sayfanin ayarina gore FW numarasi gorunur.
+   Raporlar pano genisligine gore boyutlanir.
+   SHOW REWORK (EDIT > OPTIONS): START'tan sonraki (haric) ve son
+   secilen adima kadar (dahil) HERHANGI bir traveler operasyonunda RW
+   kaydi (OpAc) olan serinin yanina kirmizi nokta + "RW 420, 450"
+   (sigmayanlar "+N"; tam liste seriye tiklayinca alt satirda);
+   grup altinda 'N with rework (RW)'.  RW tarihi onemsizdir.
+   Ayrinti: HESAPLAMA_MANTIGI.txt BOLUM 8b.
+
+============================================================
+v63  -  DUZ OPERASYON SATIRI HER ZAMAN AYRI BIR ADIM (130 = 130/0)
+============================================================
+
+!! TRAVELER'I BIR KEZ YENIDEN YUKLEYIN !!
+   Eski yukleme silinen satirlari zaten atmisti.
+
+   Traveler'da ayni operasyon hem duz (5) hem sekansli (5/4) yazildiginda
+   duz satirin suresi sekanslarin toplamina esitse program onu "baslik"
+   sanip rotadan siliyordu.  Tek sekansta bu gercek bir adimi siliyordu:
+   5 ile 5/4 ayni saatteyse ya da 5/4 saatsizse 5 veride, analizde ve
+   EDIT TRAVELER'da gorunmuyordu.
+
+   Artik duz satir HER ZAMAN 130/0'dir - kendi suresi olan ayri bir adim.
+   Hicbir satir rotadan cikmaz, sureler sekanslara bolunmez.  (Asagidaki
+   v57/v58 notlarindaki "baslik" kurali gecersizdir.)
+
+============================================================
+v62  -  SON KONUM KURALI: X KARAR VERIR (atolyenin kurali)
+============================================================
+
+!! BU SURUMDEN SONRA SAP VERISINI BIR KEZ YENIDEN YUKLEYIN !!
+   Unit (M, setup) ve Iscilik (P) sutunlari yalniz yeni yuklemede
+   okunur.  Yuklemeden once setup satirlari uretim sayilir ve
+   ilerleme Toplam Is'e duser.  Veritabani ilk acilista kendiliginden
+   guncellenir (birkac saniye).
+
+1) PARCA NEREDE / NE ZAMAN BITTI  (WATERFALL, BOTTLENECK, FORECAST,
+   B1000 ve PREDICTION hepsi ayni kural)
+   - Konum = rotada URETIM girisi olan EN ILERI adim.  Rework ve
+     tarih konumu degistirmez.
+   - O adim yalniz SETUP olmayan, REWORK olmayan bir satirdaki X ile
+     biter -> parca sonraki adimda BEKLER.  X yoksa (ya da yalniz
+     setup satirinda X varsa) parca orada ISLENIR - saat ne derse
+     desin.  "Saat standardi doldurdu = bitti" kurali KALKTI.
+   - Gerideki adimlar X'siz de bitmis sayilir.  Tamamlanma tarihi:
+     X varsa X'in tarihi, yoksa son giris tarihi.
+   - SEKANSLAR SIRALI ADIMLARDIR: 280 (=280/0) -> 280/2 -> 280/7.
+     Sekanslar arasi giris/X odunc verme kalkti (tabandaki sekansi bos,
+     sonrakileri yesil gosteren hata buydu).
+
+2) ILERLEME SAATI (turuncu hucre, B1000 sayaci, kalan is, forecast)
+   Satir satir: makine suresi (O) varsa o, yoksa o satirin iscilik
+   suresi (P).  Setup ve rework satirlari sayilmaz.  Toplam Is (T)
+   kullanilmaz.  Saat yalniz ilerlemeyi gosterir, bitti demez.
+
+3) BOTTLENECK
+   - "Finished" (eski Leaving) = o gun X'i girilen seri sayisi -
+     Excel formulunuzle hucresi hucresine ayni (otomatik test var).
+   - Yeni dugme: "Count finished without X".  Aciksa X'siz gecilen
+     adimlar son giris gununde sayilir; kapaliysa sonuc Excel
+     formulunun aynisidir.  Alttaki not X'siz kac tane oldugunu yazar.
+   - Gun basliklari kisa ve DIKEY ("08.06 Mon").
+   - DISTINCT SERIALS / TOTAL ENTRIES sutunlari kalkti; yerlerine esit
+     genislikte iki sutun:
+       PASSED       secili aralikta o adimi BITIREN farkli seri sayisi
+                    (Finished sutununun toplami; X'siz dugmesine uyar)
+       WAITING NOW  araligin SON GUNU sonunda o adimda duran farkli seri
+                    sayisi (o gunun Waiting sutunu)
+   - WAITING hesabi waterfall kuraliyla gun gun ayni (otomatik test):
+     parca o gun sonunda uretim girisi olan en ileri adimdadir; X ile
+     kapandiysa sonraki adimda bekler.  Rotada olmayan bir operasyona
+     giris, ondan onceki rota adimina varildigini gosterir (waterfall
+     ile ayni).
+   - Excel'e aktarimda sekansli adimlar (280/2 gibi) sifir yaziliyordu -
+     duzeldi.
+
+4) WATERFALL
+   - Operasyon numaralari DIKEY yazilir; sutunlar 58'den 42 px'e
+     daraldi - ayni ekranda yaklasik %40 daha fazla operasyon.
+   - PREDICTION yalniz LEAD TIME'a gore; "by booked + time since"
+     secenegi kaldirildi.  Tahmin X ile bulunan konumdan baslar ve
+     adim adim (sekanslar dahil) yurur.  v61'de lead time tablosu
+     sekans gecislerini atladigi icin tahmin sonraki adimlari yanlis
+     indeksle okuyordu - duzeldi.
+   - X ile kapanmis adimdaki parcanin KALAN suresi artik sonraki
+     adimdan hesaplanir.
+
+5) DATA sayfasi - YUKLEME UYARISI
+   Eksik tezgah uyarisinin altinda: kac serinin gerideki bir adimi
+   X'siz gecildigi (ve en cok hangi adimlarda), ve son SAP dosyasinda
+   Son / Unit / Seq / Toplam Is sutunlarindan eksik olan.
+
+6) HIZ VE TEMIZLIK
+   - Atolye saati hesabi (lead time / kuyruk) gun gun yurumek yerine
+     tek formulle yapiliyor: sonuc birebir ayni, lead time ~%80 daha
+     az zaman.
+   - Kullanilmayan fonksiyon, kural, sabit ve arayuz kodlari silindi.
+   - B1000 ve FORECAST parca dugmeleri tema degisince artik yeniden
+     boyaniyor (eskiden tiklanana kadar eski renkte kaliyordu).
+   - B1000'de X ile kapanan parcanin yuzdesi "%10000" gorunuyordu -
+     duzeldi.
+
+============================================================
+v61  -  USERS EKRANI: HATA, YENILEME, VE OLU OTURUMLAR
+============================================================
+
+Uc sikayet, tek bir kok sebep etrafinda.
+
+1) "AttributeError: 'UserAdminDialog' object has no attribute
+   '_paint_maintenance'"
+
+   Ekranin kendi kalp atisi (_tick) her alti saniyede bir listeyi
+   yeniliyordu, ve OLMAYAN bir fonksiyonu cagiriyordu.  Ilk tick'te
+   hata kutusu cikiyordu - "bir sure bekledikten sonra" dedigin sey
+   buydu, ekran acildiktan yaklasik alti saniye sonra.
+
+2) AYNI HATA, YENILEMEYI DE OLDURUYORDU   (asil zarar)
+
+   Istisna, hemen altindaki "alti saniye sonra yine kos" satirinin
+   uzerinden atliyordu.  Yani ZAMANLAYICI BIR DAHA KURULMUYORDU:
+   ekran, bir kez okudugu listeyi sonsuza kadar gosteriyordu.
+
+   "Refresh komutu calismiyor" ile "eski oturumlar hep duruyor" ayni
+   hatanin iki yuzuydu.
+
+   ARTIK: yenileme hata verirse hata EKRANIN ALT SATIRINDA yaziliyor
+   (alti saniyede bir kutu cikamaz, kapatilamaz), ve zamanlayici HER
+   DURUMDA yeniden kuruluyor.  Basarisiz bir yenileme, bir sonrakini
+   goturmez.
+
+3) KAPANMIS OTURUMLAR LISTEDE KALIYORDU
+
+   Ekraninda 26, 47, 51 SAAT onceden kalma satirlar vardi.
+
+   Sebebi: bayat satirlari silen tek yer live_sessions() idi, o da
+   YALNIZCA "CLOSE ALL OTHERS" dugmesinden cagriliyor.  Kimse o
+   dugmeye basmadikca temizlik HIC calismiyordu.
+
+   Temizlik artik listenin GERCEKTEN OKUNDUGU yerde: bir saatten uzun
+   suredir haber vermeyen satir hem ekrandan dusuyor hem dosyadan
+   siliniyor.  Silme, baskalarinin kullandigi dosyaya yazmak oldugu
+   icin dakikada birden sik yapilmiyor; arada suzme calisiyor.
+
+   BAYAT AMA TAZE olan satir DURUYOR (bes dakika gibi) - az once
+   kapatma istegi gonderdigin bir kopyanin cevap vermedigini gormen
+   gerekir.  Kaybolan yalnizca dunden kalanlardir.
+
+4) BAKIM MODU ARTIK GERCEKTEN ACILABILIYOR
+
+   Bunu duzeltirken cikti: eksik olan _paint_maintenance, hic
+   yapilmamis bir panelin artigiymis.  Bakim modu veritabaninda
+   v55'ten beri var, her kopya ona uyuyor - ama HICBIR YERDEN
+   ACILAMIYORDU: paneli de dugmesi de yoktu.  Yani daha once sana
+   "admin bakim modunu acinca" diye anlattigim sey, aslinda
+   acilamiyordu.
+
+   Panel artik USERS AND OPEN SESSIONS ekraninda, oturumlarin altinda:
+   durumu yaziyor (kim, ne zaman acmis) ve tek dugmeyle aciliyor
+   kapaniyor.  Aciksa butun kopyalar bir sonraki yoklamalarinda
+   kendilerini kapatir ve admin disinda kimse programi acamaz.
+
+TESTLER
+   test_sessions_idle  57 kontrol - olculen sey: alti saniye beklenip
+                       ekranin KENDILIGINDEN yenilendigi, hatali bir
+                       tick'in zamanlayiciyi oldurmedigi, 30 saatlik
+                       satirin dustugu ama 5 dakikaliginin durdugu
+
+============================================================
+v60  -  ALTI SIKAYET, ALTISI DA GERCEK HATAYDI
+============================================================
+
+1) VARDIYALARI KAYDEDINCE EKRAN ESKIYE DONUYORDU
+
+   Kaydetmenin kendisi dogruydu - takvim yaziliyor, analiz yeniden
+   kosuyordu.  Hata GERI OKUMADAYDI: ekran uc vardiya kutusunu
+   doldururken GUNLERI dolasip her gunun kendi listesini sirayla 0, 1,
+   2 kutularina yaziyordu.
+
+   Yalniz gece vardiyasi donen bir Cumartesi, 23:00-07:00'i BIRINCI
+   kutuya yaziyor, onun uzerine de Pazartesi'nin sabah vardiyasi
+   biniyordu.  Ekran, kaydedilenden baska bir takvim gosteriyordu.
+
+   ARTIK kutular GUNLERDEN degil, kaydedilmis FARKLI VARDIYALARDAN
+   kuruluyor ve saat sirasina diziliyor; her gun hangilerini
+   donduruyorsa onlar tikli geliyor.  Tik eslesmesi iki ucu birden
+   tutuyor - iki vardiya ayni saatte baslayip farkli saatte bitebilir.
+
+2) "130" ILE "130/0" ARTIK AYNI ADIM
+
+   SAP ayni adimi bazen sekans sutunu BOS, bazen SIFIR yazarak
+   gonderiyor.  Program bunlari iki ayri adim sayiyordu: o adimin
+   girisleri ikiye boluniyor, ne biri standardi dolduruyor ne digeri.
+
+   Artik sekans sifirsa "sekans yok" demektir.  130/0 = 130.
+
+3) STANDART SURENIN ONDALIGI GORUNUYOR
+
+   Waterfall hucresi saatleri TAM SAYIYA yuvarliyordu: 0.85 saat "1",
+   0.4 saat "0" olarak yaziliyordu.
+
+   "Hala standart suresi sifir gosteriyor" dedigin yerlerin bir kismi
+   buydu - sure vardi, EKRAN yuvarliyordu.  Artik 0.85 sa, 0.85 yazar.
+
+4) TURUNCU "PROCESSING" SAYILARI SEKANSLARDA BOZUKTU
+
+   v59'da ekledigim yedek kuralin kendi hatasiydi, buldum ve
+   duzelttim: sekansi tutmayan bir giris, o operasyonun HER sekans
+   satirina yaziliyordu.  Tek bir 3 saatlik giris ekranda hem "3/4h"
+   hem "3/8h" olarak goruluyor, saat operasyon icinde birden fazla kez
+   sayiliyordu.
+
+   BIR GIRIS BIR SATIRA AITTIR.  Artik o operasyonun kendi girisi
+   olmayan ILK satirina dusuyor.  Operasyonun geri kalanina yine
+   varilmis sayilir - parca, sekanslarindan birindeyse zaten o
+   operasyondadir.
+
+5) "610'DA GORUNUYOR AMA WATERFALL'DA EN BASTA YAZIYOR"
+
+   Sebep: giris yapilan operasyon ROTADA YOKSA o giris hicbir rota
+   satiriyla eslesmiyordu.  Parcanin konumu HIC YOKTU, matris de onu
+   rotanin EN BASINA ciziyordu - oysa diger sayfalar "610" diyordu.
+
+   Operasyon iki sekilde rotada olmayabilir: traveler yeniden
+   yuklenmistir ve o satiri artik tasimiyordur, ya da sayfaya
+   "temizlik adimlarini cikar" denmistir.
+
+   ARTIK boyle bir giris, O OPERASYONDAN ONCEKI SON ROTA ADIMINA
+   VARILDIGININ kanitidir.  610'a giris yapilmis, rotada en ileri 600
+   varsa parca 600'de gorunur - basta degil.
+
+   Iki sey degismedi: rota disi bir REWORK parcayi yine tasimaz
+   (rework, kusuru tasiyan operasyona yazilir, parca oradan cok sonra
+   gecmis olabilir), ve rotadaki ileri bir giris varken parca geri
+   cekilmez.
+
+   Ayrica boyle adimlar "bitmis" sayilmaz - girisleri yoktur, program
+   da onlara giris uydurmaz.
+
+6) B1000 LIVE'IN YAVASLAMASI  (benim v59'da soktugum hata)
+
+   v59'un yedek eslestirme haritasi HER SERI ICIN bastan kuruluyordu:
+   seri sayisi x giris sayisi kadar adim.  Gercek veritabaninda olctum,
+   acilis 0.29 sn'den 1.02 sn'ye cikmisti.
+
+   Harita artik dongu oncesi BIR KEZ kuruluyor.  Olcum: 1.02 sn -> 0.28
+   sn; v59 oncesi degerin (0.29 sn) altinda.
+
+TESTLER
+   test_v60_fixes   54 kontrol - alti maddenin alti da burada,
+                    performans dahil (seri sayisi on kat artinca sure
+                    de on kat artmali, yuz kat degil)
+
+============================================================
+v59  -  GIRISIN SEKANSI TUTMASA DA PARCAYI ILERLETIR
+============================================================
+
+1) ILERIDEKI OPERASYONA GIRIS VARKEN PARCA ESKI YERDE DURUYORDU
+
+   Sebep: GIRISIN SEKANSI ile ROTANIN SEKANSI tutmadiginda o giris
+   GORUNMEZ oluyordu.
+
+   Iki sekilde olur, ikisi de sahada var:
+     - SAP operasyonu SEKANS YAZMADAN bookluyor, traveler ise o
+       operasyonu sekanslara bolmus
+     - giriste traveler'in kullanmadigi bir sekans yaziliyor
+
+   Her iki halde de o giris hicbir rota satiriyla eslesmiyor, yani
+   program icin HIC YOK.  Parca, saha onu coktan ilerletmisken eski
+   operasyonda duruyordu.
+
+   ARTIK: kesin eslesme bulunamayan bir rota satiri, AYNI OPERASYONA
+   yapilmis girise duser.  Bu bir YEDEK KURALDIR, ana kural degil -
+   sekanslar tutuyorsa karari onlar verir.
+
+   Sonuc, senin istedigin gibi: ileriki bir operasyona giris varsa
+   parca ORADADIR; o operasyon TAMAMLANMAMIS olsa bile (X gelmemis
+   olsa bile) parca orada gorunur, cunku giris onun oraya vardigini
+   kanitlar.
+
+   Ayni yedek kural B1000 LIVE'a da kondu - plan ile waterfall ayni
+   seriyi iki ayri yere koyamaz.
+
+2) TEKERLEK SAYFALAR ARASINDA GEZINCE OLUYORDU  (v58'de kalan sebep)
+
+   v58'de tablolarin tekerlegi devretmesini duzeltmistim, ama asil
+   katil baskaydi ve bulundu:
+
+   WATERFALL MATRISI tekerlegi hala ESKI YONTEMLE aliyordu: imlec
+   uzerine gelince bind_all, ayrilinca unbind_all.  unbind_all
+   GLOBALDIR - "benim bagimi" degil O BAGI siler, yani butun programin
+   tek tekerlek dagiticisini.  Matrisin uzerinden bir kez gecip
+   ayrilmak, tekerlegi HER SAYFADA olduruyordu; program yeniden
+   acilana kadar geri gelmiyordu.
+
+   "En basta calisti, sayfalar arasinda gezdikten sonra olduu" tam
+   olarak buydu.
+
+   (Ayni hata v49'da GridTable ve ScrollPage'den temizlenmisti; bu
+   matris kendi widget'i oldugu icin gozden kacmis.)
+
+   Artik matris de tek dagiticiyi kullaniyor.  Programda hicbir yerde
+   unbind_all kalmadi; testi de bunu kontrol ediyor.
+
+============================================================
+v58  -  SEKANS SUTUNLARI, "130"UN KENDISI, TEKERLEK ZINCIRI
+============================================================
+
+1) "ONE ENTRY PER OP" SEKANSLARI YUTUYORDU   (asil sebep)
+
+   WATERFALL ve BOTTLENECK'teki "tekrar eden operasyonlari tek satira
+   indir" secenegi - VARSAYILAN OLARAK ACIK - operasyon NUMARASINA gore
+   calisiyordu.  Sekanslarla birlikte 130, 130/1 ve 130/4 ayni
+   operasyonun tekrari sanilip TEK SUTUNA indiriliyordu: o operasyonun
+   isinin ucte ikisi rotadan kayboluyor, ekranda kalan tek sutun da
+   hangi satir secildiyse onun suresini gosteriyordu.
+
+   "Waterfall tekrar eden operasyonlari kapattiriyor" dedigin davranis
+   ve gordugun eksik/sifir sureler buradan geliyordu.
+
+   Artik filtre ADIM anahtarina gore calisiyor: AYNI SEKANSIN tekrari
+   birlesir, FARKLI SEKANSLAR ayri kalir.  Secenek kapaliyken hicbir
+   sey elenmez (eskisi gibi).
+
+2) "130" HEM ANA OPERASYON HEM ALT SEKANS OLABILIYOR
+
+   v57'de sekans numarasi olmayan satiri HER ZAMAN baslik sayip rotadan
+   cikariyordum.  Senin travelerinda o satir gercek bir alt adim - yani
+   bu varsayim yanlisti.
+
+   Artik karar TAHMINLE DEGIL SAYILARLA veriliyor:
+
+       duz satirin suresi = sekanslarin toplami   ->  BASLIKTIR
+                                                      (12 = 4+8)
+       degilse                                    ->  KENDI ADIMIDIR,
+                                                      suresiyle kalir
+                                                      (3 != 4+8)
+
+   Iki durumda da yukleme kaydinda ne yapildigi yaziyor.  Bir satiri
+   baslik olarak okutmak istiyorsan suresini sekanslarinin toplami
+   olarak yaz; program onu oyle okur.
+
+3) TEKERLEKLE KAYDIRMA BIR YERDEN SONRA TAKILIYORDU
+
+   Tek tekerlek dagiticisi, imlecin altindaki ILK kayan seye notch'u
+   verip duruyordu.  Dibine gelmis bir tablo her notch'u YUTUYOR,
+   altindaki sayfa hic kaymiyordu - uzun bir sayfada bu, "scroll yarida
+   duruyor" diye gorunur.
+
+   Artik zincirleme var: tablo kendi icinde daha fazla kayamiyorsa
+   notch onu cevreleyen SAYFAYA devrediliyor, iki yonde de.  Tablo
+   ortadayken yine kendisi kayar.
+
+   Ayrica: bir yeniden cizim, baska bir cizim devam ederken gelirse
+   DUSURULUYORDU ve yerine hicbir sey gelmiyordu - kaydirilan alan bos
+   kaliyordu.  Artik dusmuyor, biraz sonra tekrar deneniyor.
+
+============================================================
+v57  -  SEKANSLARIN STANDART SURELERI  (sifir cikma sorunu)
+============================================================
+
+"Yeni traveler yuklendiginde bazi sekans numaralarinin suresi sifir
+cikiyor" diye bildirdigin sorun.  Kontrol ettim: DORT AYRI SEBEBI vardi,
+hepsi duzeltildi.  Her biri icin test yazildi.
+
+1) GENIS BICIM (+ / - / PARCA) STANDART SUREYI HIC OKUMUYORDU
+
+   Bu duzen tam UC SUTUN olarak okunuyordu: operasyon, onceki, aciklama.
+   Yanina yazilan standart sure - ve tezgah grubu - hic alinmiyordu, yani
+   o dosyadan gelen HER adim sifir suresiyle geliyordu.
+
+   Artik parca sutunundan sonraki basliklar okunuyor: "Std Hour" /
+   "Sure", "Seq. Number" / "Sekans", "Group" / "Grup".
+
+2) AYRI SEKANS SUTUNU BAZI DUZENLERDE GORULMUYORDU
+
+   Sekans, operasyon hucresine "130/1" diye yazilabilir ya da AYRI BIR
+   SUTUNDA durabilir.  Ikincisi yalnizca uzun duzende okunuyordu.  Artik
+   uc duzenin hepsinde okunuyor.
+
+   Bu okunmayinca ayni operasyonun iki satiri ayni adim gibi gorunuyor
+   ve ESKI KURALLA BIRLESTIRILIYORDU: sureleri toplanip tek satira
+   yaziliyor, digeri kayboluyordu.  Tarif ettigin "hepsini tum operasyon
+   altina toplama" davranisi buydu.
+
+3) GRUP SATIRI + SEKANS SATIRLARI  (asil mesele)
+
+   Traveler genelde ikisini birden tasiyor:
+
+       130        FPI  (butun operasyon)      12.0 sa
+       130/1      FPI WASH                     4.0 sa
+       130/4      FPI READ                     8.0 sa
+
+   "130" satiri BIR ADIM DEGIL, BIR BASLIKTIR.  Rotada birakilinca iki
+   sey oluyordu: kimsenin giris yapmadigi bir adim olarak duruyor (parca
+   orada takili gorunuyor), ve suresi sekanslarin ustune IKINCI KEZ
+   sayiliyordu - 12 saatlik operasyon 24 saat olarak.
+
+   Artik grup satiri rotadan cikariliyor ve suresi OPERASYONUN BEYAN
+   EDILEN TOPLAMI olarak tutuluyor.  Sekanslarin kendi sureleri aynen
+   korunuyor.
+
+4) SURE YALNIZ GRUP SATIRINDA YAZILIYSA  (sifir cikma hali)
+
+   Sekans satirlarinda sure yoksa, o sekanslar sifir suresiyle
+   kaliyordu.  SIFIR SURE ZARARSIZ DEGILDIR: program bir adimi "standart
+   suresi yoksa, herhangi bir giris onu bitirir" diye okur - yani o
+   sekans ilk girisle bitmis sayilir ve hicbir parcayi tutmaz.
+
+   Artik operasyonun beyan ettigi toplam, sekanslari arasinda ESIT
+   BOLUNUYOR ve bu yukleme kaydinda ACIKCA yaziliyor:
+
+       TRAVELER  PART-Z - op 130: the 2 sequences carried no standard
+       time, so the operation's 12 h was split equally (6 h each) -
+       write their own times in the traveler if they differ
+
+   Yani sure kaybolmuyor, ama tahmin degil BEYAN oldugu da gizlenmiyor.
+   Gercek sureleri travelera yazarsan onlar kullanilir.
+
+5) SEKANSLARIN TOPLAMI GRUP SATIRIYLA TUTMUYORSA
+
+   Sekanslarin kendi sureleri kazanir (dosyada tek tek yazilmis olan
+   odur), ama fark yukleme kaydinda bildirilir:
+
+       TRAVELER  PART-M - op 130: the sequences add up to 12 h but the
+       operation line says 20 h - the sequences' own times are used
+
+6) SURESI OLMAYAN ADIMLAR ARTIK BILDIRILIYOR
+
+   Yukleme kaydi, her parca icin standart suresi olmayan adimlari
+   sayiyor ve adlariyla yaziyor.  Bu, aylar sonra "analiz garip"
+   demeden once gorulmesi gereken seydi.
+
+7) OPERASYONUN TOPLAM SURESI HER SATIRDAN OKUNABILIYOR
+
+   Rotanin her satiri artik kendi suresinin yaninda OPERASYONUN TOPLAM
+   SURESINI de tasiyor (sekanslarinin toplami).  "130/1 = 4 sa,
+   130/4 = 8 sa, operasyon 130 = 12 sa" cumlesi kurulabiliyor.
+
+WATERFALL VE DIGER SURE OKUYAN SAYFALAR, dedigin gibi, o SEKANSA
+girilen sure ile O SEKANSIN standart suresine bakiyor (v53'ten beri);
+bu surumde duzelen sey, o standart surenin dosyadan DOGRU OKUNMASIYDI.
+
+============================================================
+v56  -  VARDIYA TAKVIMI VE SAYFA BASINA HAFTA BASLANGICI
+============================================================
+
+1) VARDIYA AYARI FORECAST SAYFASINA TASINDI
+
+   Vardiya, okundugu yerde duruyor artik: kapasitenin yanindaki
+   SHIFT TIMETABLE... dugmesinde.  DATA & SETTINGS'teki SHOP RULES
+   panelinde yalniz STD MARGIN ve MULTI-PART MACHINES kaldi.
+
+2) ARTIK SAAT SAAT, GUN GUN VARDIYA
+
+   Eskiden vardiya "7,5 saat x 3" idi.  Bu iki seyi soyleyemiyordu:
+   HANGI saatler oldugunu, ve bir gunun digerinden farkli olabilecegini.
+
+   Yeni ekran uc vardiyayi saatleriyle tanimlar - varsayilan:
+
+       VARDIYA 1   07:00 - 15:00
+       VARDIYA 2   15:00 - 23:00
+       VARDIYA 3   23:00 - 07:00
+
+   ve haftanin yedi gunu icin hangi vardiyalarin dondugu tek tek
+   isaretlenir.  Ornegin:
+
+       Pzt-Cum   uc vardiya    = 24 saat
+       Cmt       tek vardiya   =  8 saat
+       Paz       hicbiri       = KAPALI
+
+   HICBIR VARDIYASI OLMAYAN GUN, CALISILMAYAN GUNDUR.  Ayrica bir
+   "calisilan gunler" listesi tutulmuyor - iki yerde yazan sey er ya da
+   gec birbirini tutmaz.
+
+   GECE VARDIYASI (23:00-07:00) gece yarisini asar ve BASLADIGI gune
+   aittir.  Program bunu boyle sayar; test ediyor.
+
+3) BUNUN HESAPLARA ETKISI
+
+   KAPASITE artik GUN GUN hesaplaniyor: uc vardiya donen bir Salinin
+   kapasitesi, tek vardiya donen bir Cumartesinin uc katidir.  FORECAST
+   tablosunda her gunun kendi kapasitesi var; haftalik sutun da
+   takvimin haftalik toplamindan cikiyor.
+
+   BEKLEME SURESI de gercek vardiya saatlerine gore olculuyor.  Eskiden
+   gun "gece yarisindan baslayip N saat" sayiliyordu; 06:00'da biten bir
+   parcaya, atolye 07:00'de aciliyorken alti saat kuyruk yaziliyordu.
+   Ayrica 23:00-07:00 vardiyasi gece yarisinin yanlis tarafinda
+   sayiliyordu.
+
+   ESKI VERITABANI: takvimi olmayan bir dosya acildiginda eski
+   kuralindan (N saat x M vardiya, isaretli gunler) denk bir takvim
+   kurulur - 07:00'den baslayarak.  Yani kapasite aynen korunur,
+   saatleri sonradan duzeltirsiniz.
+
+4) HER ANALIZ SAYFASI ICIN AYRI HAFTA BASLANGICI
+
+   DATA & SETTINGS > WORKING WEEK altinda artik "PER PAGE" bolumu var:
+
+       RW ANALYSIS          Friday
+       PART BOTTLENECK      (default)
+       WATERFALL            (default)
+       ...
+
+   "(default)" birakilan sayfa ustteki genel baslangici kullanir.
+
+   Ornek: RW ANALYSIS Cuma'ya alinirsa, 17 Eylul Persembe gunu o
+   sayfada 11-17 Eylul haftasinda, BOTTLENECK'te ise 14-20 Eylul
+   haftasinda okunur.  Ayni veri, iki sayfada, kendi haftasiyla.
+
+   HICBIR SATIR YENIDEN YAZILMAZ.  Satirin TARIHI degismez; degisen tek
+   sey her sayfanin ona koydugu hafta ETIKETIDIR, ve o etiket sayfa
+   cizilirken hesaplanir.  Bu yuzden iki sayfa ayni anda farkli haftalar
+   okuyabilir ve birbirini bozmaz.
+
+============================================================
+v55  -  TAHMIN YENI BITIS TANIMINA UYDURULDU,  ORTAK KLASOR
+============================================================
+
+A)  TAHMIN (PREDICTION) KONTROLU
+
+v53'te bir operasyonun NE ZAMAN BITTIGI degisti (AH sutunundaki X
+karar veriyor, ve sekanslarin HEPSI bitmeden operasyon bitmiyor).
+Ileriye donuk tahmin bu degisikligi bilmiyordu.  Bulunan ve
+duzeltilen dort nokta:
+
+1) "SAAT YETTI, DEMEK KI BITTI" ARTIK X'LI VERIDE GECERLI DEGIL
+
+   WATERFALL > Predicted pos. > by hours + time, bir parcayi
+   "girilen saat + gecen sure standarda ulasti" diye bir SONRAKI
+   operasyona tasiyordu.  X tasiyan veride bu yanlistir: SAP o parcanin
+   adimdan ciktigini soylememistir.
+
+   Artik o durumda hucre DOLU gosterilir ("bekleniyor: son giris
+   isareti") ama parca TASINMAZ.  X tasimayan eski veride davranis
+   hicbir sekilde degismedi.
+
+   TEZGAH 6 SAATTIR SESSIZSE kurali X'li veride de calisiyor - o kural
+   MAKINE hakkindadir (uzerinde is yok), operasyonun imzalanmasi
+   hakkinda degil.
+
+2) TAHMIN SEKANSLARI ATLAMIYOR
+
+   280/1 bitip 280/3 acik kalmisken tahmin parcayi 290'a gonderiyordu.
+   Artik 280'in icinde kalan ilk bitmemis sekansa tasiyor; operasyon,
+   butun sekanslari bitmeden arkada kalmiyor.
+
+3) LEAD TIME TAHMINI ARTIK OPERASYON OPERASYON YURUYOR
+
+   "by lead time" tahmini rotayi SATIR SATIR yuruyordu.  Sekanslarla
+   280/1 -> 280/3 arasi da bir "adim" gibi gorunuyor, oysa ayni
+   istasyondur ve sirasi yoktur.  Boyle bir "adim"in ortalamasi
+   dakikalar (hatta eksi) cikar ve tahmin parcayi butun sekanslardan
+   bedavaya gecirirdi.  Artik adim, BIR OPERASYONDAN DIGERINE'dir.
+
+4) LEAD TIME SAYFASI DA AYNI SEBEPLE DUZELDI
+
+   Ayni operasyonun iki satiri arasindaki sure artik adim ortalamasina
+   KATILMIYOR.  Katildiginda butun ortalamayi asagi cekiyordu.
+
+5) B1000 LIVE, WATERFALL ILE AYNI YERI GOSTERIYOR
+
+   Plan, en ileri GIRIS YAPILMIS satiri esas aliyordu: 280/3'e giris
+   varsa parcayi orada gosteriyordu, 280/1'e hic dokunulmamis olsa
+   bile.  Artik operasyonun bitmemis sekansi varsa parca oradadir -
+   iki sayfa ayni seriyi iki ayri yere koyamaz.
+
+
+B)  ORTAK KLASORDE COK KULLANICI
+
+1) BULUNAN HATA: BIR KOPYANIN DEGISTIRDIGI AYARI DIGERLERI GORMUYORDU
+
+   Ayarlar her kopyada BELLEKTE tutulur (paylasilan klasorde her okuma
+   bir ag gidis-donusudur).  Ama o onbellegi yalnizca O KOPYANIN kendi
+   yazmasi temizliyordu - baska bir makinenin yaptigi degisiklik hicbir
+   zaman fark edilmiyordu.
+
+   OLCULDU: admin BAKIM MODUNU acinca, zaten calisan kopyalar bunu HIC
+   gormuyor.  Yani "herkes ciksin" ozelligi, tam da ihtiyac duyuldugu
+   anda kimseye ulasmiyordu.  Ayni sey vardiya suresi, calisma gunleri
+   gibi butun SHOP RULES ayarlari icin de gecerliydi.
+
+   DUZELTILDI:
+     - `maintenance` artik hicbir zaman onbellekten okunmuyor.
+     - Her ayar yazmasi ortak bir AYAR SAYACINI ilerletiyor; her kopya
+       bu sayaci yoklamasinda okuyor ve sayac ilerlediyse ayarlarini
+       dosyadan yeniden aliyor, kurallari tekrar uyguluyor ve acik
+       sayfayi yeniliyor ("Settings reloaded - another user changed a
+       shop rule").
+
+2) PAYLASILAN KLASORDE BELLEK ESLEME (mmap) KAPATILDI
+
+   Program dosyayi bellege esleyerek okuyordu.  Yerel diskte bu iyi bir
+   hizlandirmadir; AG PAYLASIMINDA DEGILDIR: esleme makineler arasinda
+   tutarli tutulmaz, yani bir kopya digerinin uzerine yazdigi sayfalari
+   okumaya devam edebilir.  Tam olarak "digerlerinin ne yaptigini
+   goremiyorum" gibi gorunur.  SQLite'in kendi belgesi de ag dosya
+   sisteminde kullanmayin der.  Artik yalniz yerel diskte aciliyor.
+
+3) OTURUM EKRANI ARTIK NE OLDUGUNU SOYLUYOR
+
+   "Kapat" calismiyor gorundugunde sebebi ekranda yoktu.  USERS AND
+   OPEN SESSIONS ekraninda artik:
+
+     - BAYAT OTURUMLAR DA LISTELENIYOR (eskiden gizleniyorlardi):
+       durumu "not answering (stale)" diye yaziyor.
+     - LAST SEEN artik saat degil, "12 s ago" / "4 min ago" - bir
+       kopyanin hala cevap verip vermedigi ancak boyle anlasilir.
+     - STATE sutunu: open / CLOSING - asked 14:32 / not answering.
+     - Altta tek satir teshis: dosyada kac oturum satiri var, BU KOPYA
+       YAZABILIYOR MU (yazamayan bir kopya kimseyi kapatamaz ve kendisi
+       de listede gorunmez), journal modu, ve dosyanin agda olup
+       olmadigi.
+     - FORGET SELECTED: cokup satirini geride birakmis bir kopyayi
+       listeden dusurur (o kopyayi KAPATMAZ, sadece unutur).
+
+   NOT: kapatma istegi mekanizmasinin kendisi test edildi ve iki ayri
+   kopya arasinda calisiyor.  Sahada hala calismiyorsa yukaridaki
+   teshis satiri sebebi soyleyecektir - ozellikle "THIS COPY CANNOT
+   WRITE" yaziyorsa.
+
+============================================================
+v54  -  SAG TIK MENUSU, REWORK CALISANI, ZOOM HIZI
+============================================================
+
+1) SAG TIK: MENU ARTIK SADECE TIKLADIGIN SUTUN ICIN
+
+   RW ANALYSIS'te bir sutun basligina sag tiklayinca butun sutunlarin
+   gruplama secenekleri listeleniyordu - isaret etmedigin on iki sutun
+   icin on iki satir.
+
+   Artik menu, USTUNDE DURDUGUN sutun hakkindadir:
+
+       WORK CENTRE
+       -----------
+       GROUP BY  WORK CENTRE
+       FILTER  WORK CENTRE ...
+       clear filter on WORK CENTRE        (filtre varsa)
+       -----------
+       grouping: back to SERIAL NO        (gruplama degismisse)
+       clear ALL column filters (n)       (filtre varsa)
+
+   Gruplanamayan bir sutunda (RW HOUR, tarih) menu bunu soyler.
+
+2) SUTUNA GORE FILTRELEME  (yeni)
+
+   FILTER ... secenegi, O SUTUNUN EKRANDAKI DEGERLERINI listeler -
+   yaninda kac satir tasidiklari yazar - ve istedigin kadarini
+   secersin.  Tablo yalniz o degerleri gosterir.
+
+   Filtre PER RAW DATA tablosuna uygulanir; ustteki metrik kutulari
+   butun filtre kumesini anlatmaya devam eder.  Karismasin diye
+   tablonun altinda "COLUMN FILTERS (this table only) - WORK CENTRE: 1"
+   diye yazar.
+
+   Birden fazla sutunda ayni anda filtre olabilir; hepsi birlikte
+   uygulanir.
+
+3) REWORK'U KIM YAPTI
+
+   Tablo zaten rework'un hangi tezgahta yapildigini gosteriyordu;
+   artik KIMIN yaptigini da gosteriyor:
+
+       RW EMPLOYEE NO / RW EMPLOYEE NAME     rework'u yapan
+       CAUSE OP EMPLOYEE NO / NAME           sebep operasyonunu yapan
+
+   Ikincisi zaten vardi ama basligi sadece "EMPLOYEE NO/NAME" idi ve
+   hangi kisi oldugu belli degildi; artik adiyla yaziyor.
+
+   Bu iki sutuna gore de gruplama ve filtreleme yapilabilir
+   ("rework'lerin kaci Mehmet'te" gibi).
+
+   NOT: bu bilgi SAP dosyasindaki calisan sutunlarindan gelir (Yaka No
+   / Name of employee).  Dosyada yoksa sutun bos gorunur.
+
+4) BUYUTUP KUCULTMEK ARTIK KASMIYOR
+
+   Iki gercek sebep olculdu ve ikisi de duzeltildi:
+
+   a) ZOOM KAYDIRMA CUBUGU HER PIKSELDE TAM CIZIM YAPTIRIYORDU.
+      Ttk kaydirma cubugu surukleme boyunca saniyede onlarca deger
+      gonderir; her biri 50 milisaniyelik bir yeniden cizim
+      baslatiyordu - ve iki tablolu sayfalarda bunun iki kati.
+      Artik zoom degeri ANINDA aliniyor, cizim surukleme DURUNCA bir
+      kez yapiliyor.  Olculdu: 15 ara adim -> 1 cizim (eskiden 15).
+      Ctrl + tekerlek de ayni yola baglandi.
+
+   b) HER HUCREDE METIN OLCUMU TCL'YE GIDIYORDU.
+      Bir hucrenin yazisi sigmazsa kisaltiliyor; bu olcum tam ekranda
+      570+ kez, uzun aciklamalarda harf harf tekrarlaniyordu.  Olcumler
+      artik onbellekte ve kisaltma ikili aramayla yapiliyor.  Olculdu:
+      ayni tabloyu ikinci kez cizerken Tcl'ye giden olcum sayisi
+      63'ten 0'a dustu.
+
+   Geriye kalan ~20 ms/cizim tamamen Tk'nin kendi canvas maliyetidir
+   (ayni sayida ogeyi elle cizmek de 15 ms suruyor).
+
+============================================================
+v53  -  SEKANS NUMARALI OPERASYONLAR VE "SON GIRIS" (X)
+============================================================
+
+BU SURUM VERI MANTIGINI DEGISTIRIR.  Sema 22 -> 23.  Eski veritabani
+acildiginda kendiliginden gecer; eski dosyalar aynen okunmaya devam
+eder (asagida "ESKI VERI" maddesi).
+
+1) TRAVELER: OPERASYON ARTIK "280/1" OLARAK YAZILIYOR
+
+   Ayni operasyon birden fazla kez, her biri kendi SEKANS numarasiyla
+   yazilabiliyor:
+
+       280/1   FPI WASH        kendi standart suresi
+       280/3   FPI PENETRANT   kendi standart suresi
+       280/4   FPI READ        kendi standart suresi
+
+   Traveler'da operasyon hucresine dogrudan "280/1" yazilir.  SAP
+   tarafinda ayni bilgi IKI SUTUNDA gelir: G operasyon, H sekans -
+   program ikisini birlestirip esler.  Sekans sutunu basligindan
+   bulunur ("Seq", "Sekans", "Sira No"); bulunamazsa H sutunu kullanilir.
+
+   ONEMLI: sekanslar ayni operasyonun tekrari DEGILDIR, o yuzden
+   birlestirilmezler.  Ayni SEKANS iki kez yazilirsa (280/1 iki satir)
+   eskisi gibi birlesir ve sureleri toplanir.
+
+2) GIRILEN ZAMAN ARTIK DOGRU SEKANSA YAZILIYOR
+
+   280/3'e girilen 6,5 saat sadece 280/3'e sayilir.  Eskiden hepsi
+   "280" torbasina giriyordu ve bir sekansin saati digerini bitmis
+   gosterebiliyordu.
+
+3) SIRADAN BAGIMSIZ TAMAMLANMA
+
+   Sekanslar sirayla yapilmak zorunda degil: 3 bitmeden 1 bitmis
+   olabilir.  Program artik bunu boyle okuyor.
+
+   BIR OPERASYON, ICINDEKI BUTUN SEKANSLAR BITMEDEN BITMIS SAYILMAZ.
+   280/3 ve 280/4 bitmis ama 280/1 acikken parca HALA 280'dedir - ve
+   ekranda tam olarak 280/1'de gorunur.
+
+4) AH SUTUNU: SON GIRIS ISARETI (X)
+
+   Bir adima yapilan son zaman girisinde AH sutununda X olur; bu "parca
+   o adimdan cikti" demektir.
+
+   ARTIK KARARI X VERIR:  X varsa adim bitmistir, girilen saat
+   standardin altinda olsa bile.  X yoksa adim bitmemistir, saat
+   standardi assa bile.
+
+   BIR ISTISNA, ve bilerek: parca DAHA ILERI BIR OPERASYONA giris
+   yapmissa, onceki operasyon arkada kalmis sayilir (X unutulmus
+   olabilir; parca iki yerde birden olamaz).  Bu istisna operasyonlar
+   ARASINDADIR - bir operasyonun kendi sekanslari arasinda gecmez,
+   cunku sekanslar sirali degildir.  Bu davranisi istemezseniz soyleyin,
+   kapatilir.
+
+5) ESKI VERI (X SUTUNU OLMAYAN DOSYALAR)
+
+   X kurali, X BILGISI TASIYAN parcalarda isler.  Bir parcanin hicbir
+   kaydinda X yoksa - X sutunu daha yokken alinmis her dosya - eski
+   kural aynen gecerlidir: girilen makine suresi standarda ulastiysa
+   adim bitmistir.
+
+   Karar PARCA BAZINDADIR, yani yeni formata gecis sirasinda yarisi
+   yuklenmis bir veri iki tarafta da dogru okunur.
+
+6) BUTUN ANALIZ SAYFALARI AYNI MANTIGI KULLANIYOR
+
+   WATERFALL       sutun basligi artik 280/1, 280/3, 280/4.  Parca,
+                   sekanslarindan biri acikken o operasyonda gorunur.
+   PART BOTTLENECK gun gun tablo ve LONGEST WAIT sekans sekans.
+   B1000 LIVE      bekleme bolgesi "280" yazarsa 280'in BUTUN
+                   sekanslarini bekler; "280/1" yazarsa yalniz onu.
+   RW ANALYSIS     rework girisi hangi sekansa yapildiysa o gorunur
+                   (280/3), sekans yoksa eskisi gibi 280.
+   FORECAST        her sekans kendi standart suresiyle ayri bir is;
+                   kalan is hesabi bunlarin toplamidir.
+   EDIT TRAVELER   sekanslar ayri ayri isaretlenip kapatilabilir.
+
+7) TEST VERISI
+
+   Kontrol edebilmeniz icin bu surumle birlikte test veritabaninda
+   280 operasyonu uc sekansa bolundu ve 30 seri BILEREK 280/1'de
+   birakildi (280/3 ve 280/4 X ile kapali, 280/1 acik).  Programda
+   WATERFALL > 2564M10G02 acildiginda bu seriler 280/1'de gorunur.
+
+============================================================
+v52  -  BOTTLENECK SAYILARI, TEZGAH KAPSAMI, PARCA FILTRESI
+============================================================
+
+1) BOTTLENECK: BEKLEYEN VE GIDEN ARTIK BIRBIRINI TUTUYOR
+
+   Sikayet dogruydu ve sebebi olculdu: BEKLEYEN ile TAMAMLANAN AYRI
+   AYRI hesaplaniyordu.  Ayni soruya iki farkli cevap veren iki hesap
+   birbirini tutamaz - ve tutmuyordu:  tek bir parcada 532 hucrede
+   kuyruk azaliyor ama o kadar "tamamlandi" gorunmuyordu.
+
+   SEBEBI: bir parca standart suresine ULASMADAN bir sonraki
+   operasyona gecerse, programin geri kalani bunu "onceki operasyon
+   bitti" sayar (BOLUM 0.4 kural 4) - ama bu sayfanin COMPLETED sutunu
+   saymiyordu.  Olculen: 8.683 cikisin sebebi buydu, 3.935'i normal
+   bitirmeydi.
+
+   Artik ikisi de TEK YURUYUSTEN cikiyor, yani su esitlik zorunlu:
+
+       bekleyen(bugun) = bekleyen(dun) + bugun SIRAYA GIREN
+                                       - bugun CIKAN
+
+   Olculdu: 7.110 hucrede kirik yok (onceden 532).
+
+   Sutun adi da duzeldi:  D (COMPLETED) -> L (LEAVING).  "Giden" iki
+   sekilde olur ve ikisi de sayilir:
+       - burada isi bitti
+       - hic islem gormeden ileri gitti (ATLADI)
+   Atlayan varsa kac tane oldugu tablonun altinda yazar.
+
+2) BOTTLENECK: SECIM ARTIK GECIKMIYOR
+
+   Gun gun tablo 300 sutuna kadar cikiyor ve HER secimde butun
+   sutunlar, iki tabloda birden yeniden ciziliyordu.
+
+   Tablolar zaten satirlari sanallastiriyordu (sadece ekrandakiler
+   ciziliyor); artik SUTUNLAR da oyle.  Olculdu: 274 sutunluk bir
+   tabloda secim 118 ms -> 35 ms.  Yana kaydirinca pencere kendini
+   yeniliyor.  Bu butun sayfalardaki genis tablolara yarar.
+
+3) B1000: CIZILI TEZGAHLARIN HEPSI ARTIK BIR GRUBA GIRIYOR
+
+   Eskiden bir tezgah SESSIZCE dusuyordu: WC kodu COMP'ta yoksa, ya da
+   hic kod yazilmamissa, kapasitede hic gorunmuyordu.  "Tezgah sayisini
+   bazen dogru saymiyor" ve "yeni tezgah ekleyince analiz degismiyor"
+   sikayetlerinin ikisi de buydu.
+
+   Yeni sira:
+       1. tezgahin uzerine YAZILAN grup   (MACHINE GROUP alani artik
+          tezgahlar icin de aciktir)
+       2. COMP'un o WC koduna verdigi grup
+       3. hicbiri yoksa: WC KODUNUN KENDISI grup olur
+
+   Kodu da grubu da olmayan tezgah kapasiteye giremez (hicbir rota
+   adimina baglanamaz) ama artik ADIYLA bildirilir.
+
+   B1000 ekraninin ustunde yeni bir satir: kac tezgah cizili, kaci
+   sayildi, hangi grupta kac tane, ve sayilamayanlar.  Tezgah secince
+   sag panelde "bu tezgah hangi gruba, nereden dolayi giriyor" yazar.
+
+4) FORECAST: PARCA FILTRESI ARTIK SAHAYI BOSALTMIYOR
+
+   Haklisin - eskiden uc parca secince diger her sey sahadan
+   kalkiyordu: secilen parcalar hicbir seyin arkasinda beklemiyordu ve
+   sonuc gercekten cok daha iyi cikiyordu.
+
+   Artik varsayilan olarak BUTUN SAHA calismaya devam eder; filtre
+   sadece KIMIN SAYILARININ gosterilecegine karar verir.  Renk yine
+   gercek toplam yuku gosterir.  Eski okumayi isterseniz kutucugu
+   kapatin: "when parts are filtered, the rest still use the machines".
+
+   Olculdu (test verisi): butun saha 398 seri / 2.723 saat  ->  ayni
+   parca yalniz basina 203 seri / 2.118 saat.  Aradaki fark, o parcanin
+   digerlerinin arkasinda bekledigi suredir.
+
+5) BEKLEYEN PARCA SAYISI
+
+   Bu sayi artik FARKLI SERI sayar (bekleyen is araligi degil), ve
+   gunun toplami gruplarin toplami degil, o gun bekleyen farkli
+   parcalarin BIRLESIMIDIR.
+
+   ASIL ABSURTLUK BURADAYDI: parca satirlarinin ozet sutunu gunleri
+   TOPLUYORDU.  Uc gun bekleyen bir parca uc kez sayiliyordu, yani
+   sahadaki parca sayisindan buyuk rakamlar cikiyordu.  Parca sayan
+   sutunlarda ozet artik TOPLAM degil, EN YOGUN GUN'dur.  (Saat sayan
+   sutunlarda toplam anlamlidir, orada degismedi.)
+
+6) FORECAST: PLAN DEGISINCE TAHMIN KENDINI YENILIYOR
+
+   B1000 plani (kac tezgah cizili oldugu) tahminin onbellek anahtarina
+   girmiyordu: dort tezgah daha cizip FORECAST'e donunce eski hesap
+   geri veriliyordu.  Artik plan surumu de anahtarda.
+
+   ELLE GIRILEN (type in) kapasite de test edildi ve calisiyor:
+   40 tezgah yazinca CLEAN 96 sa/gun -> 960 sa/gun.
+
+============================================================
+v51  -  FORECAST DUZELTMELERI VE ACILIS OLCUMU
+============================================================
+
+1) MACHINE GROUPS FILTRESI CALISMIYORDU  -  DUZELDI
+
+   Secim penceresi (kod, aciklama) CIFTLERI bekliyor.  Sayfa ona duz
+   metin veriyordu; pencere her grup adini iki parcaya ayirmaya
+   calisip aciliyamadan patliyordu.  Ekranda hicbir sey olmuyordu,
+   "calismiyor" tam olarak buydu.
+
+   Artik aciliyor, yaninda her grubun saat/gun kapasitesi de yaziyor,
+   ve secim tabloya uygulaniyor.  Testi de var: secenekler cift
+   olmazsa test kirmizi yanar.
+
+2) PARCA FILTRESI BOS ACILIYORDU  -  DUZELDI
+
+   Parca ciplerini kuran fonksiyon YAZILMISTI ama ONU KIMSE
+   CAGIRMIYORDU.  Panel acildiginda icinde hicbir parca yoktu.
+
+   Artik sayfa ilk acildiginda ve veri degistiginde kuruluyor.
+   ACILISTA KURULMUYOR: yuzlerce rotali parcasi olan bir sahada bu
+   yuzlerce cip demek ve herkesi, henuz acmadigi bir sayfa icin
+   bekletmek demekti.  Cipler ayrica parca listesi degismediyse
+   yeniden cizilmiyor.
+
+3) BEKLEYEN PARCALAR ARTIK PARCA GRUBUNA GORE DE OKUNUYOR
+
+   "FINISH'te 313 parca sirada" hangi parcalardan oldugunu
+   soylemiyordu - bir parca numarasi mi, otuz mu?  Sahanin cevabi
+   buna gore degisir.
+
+   Yeni ROWS satiri:
+       machine group   eskisi gibi (varsayilan)
+       part group      ayni gunler, satirlar PARCA GRUBU
+       part            satirlar tek tek PARCA
+
+   Parca satirlarinda kapasite sutunu ve yuzde YOKTUR: kapasite
+   tezgaha aittir, parcaya degil.  Tezgah grubu secimi yine gecerli -
+   "sadece FINISH'te sirada bekleyenler, parca grubuna gore" diye
+   sorabilirsiniz.
+
+4) YENI FILTRE: COK UZUN ZAMANDIR DURAN PARCALARI ALMA
+
+   Filtre seridinde: LEAVE OUT PARTS WAITING LONGER THAN [N] days.
+
+   Iki aydir kimsenin dokunmadigi bir parca yarin bir tezgaha
+   gelmiyor - ama butun kalan rotasi "gelecek is" olarak sayiliyor ve
+   birkac dusesi butun gruplari bogmus gosteriyordu.  Bekleme, diger
+   sayfalardaki WAITING LONGER THAN ile AYNI sekilde olculur:
+   parcanin durdugu operasyondaki son girisinden bu yana gecen sure.
+
+   Kac parcanin dustugu tablonun altinda yazar.
+
+   NOT (olculdu): duran parcalar cikinca PENCERE ICINDE KESILEN saat
+   ARTABILIR - kuyruk acilir, tezgahlar ayni 14 gunde daha cok is
+   bitirir.  Azalan sey toplam IS LISTESIDIR.
+
+5) "ACILIS YAVASLADI" ICIN OLCUM
+
+   Acilisin yavasladigi bildirildi.  v44'ten v50'ye kadar HER SURUM
+   ayni veriyle yan yana kosuldu: acilista calisan SQL sayisi (69) ve
+   sayfa kurulum suresi (0,06 sn) SURUMLER ARASINDA HIC DEGISMEDI.
+   FORECAST sayfasinin kurulumu 5 milisaniye ve 3 sorgu (artik 1).
+   Yani yavaslama kaynak koddaki bu degisikliklerden gelmiyor - ve
+   tahmin yurutmek yerine olcmek gerekiyor.
+
+   DATA & SETTINGS > START-UP kutusu artik sunu gosteriyor:
+       TOTAL, program files, database open, pages
+       + EN YAVAS UC SAYFA, adiyla
+       + SON DORT ACILIS (tarih, total, files, db, pages)
+
+   Boylece "2 saniyeden 46 saniyeye cikti" dendiginde HANGI ADIMIN
+   siciradigi ekranda gorunur.  En sik iki sebep:
+       - Program klasoru (dist\WIP_TRACKER) AGDA duruyorsa Windows her
+         acilista butun DLL'leri agdan yukler.
+       - YENI derlenen klasoru virus tarayici bastan tarar; ilk birkac
+         acilis bu yuzden yavastir.
+   Ikisi de "program files" satirinda gorunur, "pages" satirinda
+   degil.
+
+============================================================
+v50  -  FORECAST: SADELESME VE GERCEK ASIRI YUK
+============================================================
+
+1) LEAD TIME'A GORE TAHMIN KALDIRILDI
+
+   Ucuncu bir yontem vardi: "parcalar tarihsel olarak bu adima ne zaman
+   ulasiyor".  YANLISTI ve sayiyi buyutuyordu.  Sebebi basit: tarihsel
+   sure, sahanin O ANDAKI kuyrugunu ZATEN icerir.  Onu bir de kapasite
+   kuyrugundan gecirince ayni bekleme IKI KERE sayiliyordu.
+
+   Olculdu: 15.530 saatlik gercek is, 196.027 saatlik devir olarak
+   cikiyordu - on iki katı.  Yontem tamamen kaldirildi.
+
+   Geriye iki okuma kaldi:
+       CLOSER TO REALITY   bir tezgahta bir parca, is bitene kadar.
+                           Geceyi asan parca ertesi sabah tezgahi
+                           tutmaya devam eder.  "Ne olacak."
+       Work it through     her adim standart suresini alir, is yeri
+                           olan gunlere yayilir.  "Kaba yuk ne kadar."
+
+   (Lead time'in kendisi kalkmadi: WATERFALL'daki REMAINING tahmini
+    hala ondan besleniyor.  Kalkan sey, ondan KAPASITE PLANI
+    cikarmaktir.)
+
+2) "KAPASITEMI NE KADAR ASIYORUM" ARTIK GORUNUYOR
+
+   Sikayet dogruydu: tezgah modunda her gun %100 gorunuyordu ve ne
+   kadar astigi hicbir yerde yazmiyordu.  Sebep, "calisan saat"in
+   kapasiteyi ASAMAMASIDIR - bir tezgah gununden fazlasini yapamaz.
+   Asan is o gun kuyrukta durur.
+
+   Artik gunu IKI SEKILDE okuyabiliyorsunuz (SHOW satiri):
+
+       capacity I will use      o gun gercekten kesilecek saat.
+                                %100'u asmaz - bu, PLANDIR.
+       with the backlog on top  o saat + o gun hazir olup
+                                BASLANAMAYAN is.  %100'u ASAN tek
+                                olcu budur;  %1239 gibi bir sey
+                                gorurseniz o grup o gun kapasitesinin
+                                12 katı is ile karsi karsiyadir.
+                                (VARSAYILAN budur.)
+       machine hours unused     tezgah var, baglanacak parca yok.
+       parts waiting            o gun sirada bekleyen PARCA SAYISI,
+                                grup grup.
+
+   "new work arriving" ve "left over at day end" kaldirildi - gunun
+   iki okunusu bunlari zaten anlatiyor.
+
+   RENK her zaman GERCEK YUKU gosterir, hangi sutun acik olursa olsun.
+
+3) YUZDELER ARTIK ACILIP KAPANIYOR
+
+   Hucrede yuzde yazmasi varsayilan olarak KAPALI.  Isterseniz
+   "show %" kutusu ile aciyorsunuz.  Acip kapamak hicbir seyi yeniden
+   hesaplamaz, sadece yaziyi degistirir.
+
+4) FILTRELER DIGER SAYFALARLA AYNI
+
+   FORECAST kendi kucuk filtrelerini kullaniyordu.  Artik butun
+   analiz sayfalarinin kullandigi SERIDI kullaniyor:
+
+       ENGINEER / GROUP / PART      (parca cipleri, coklu secim)
+       TECO / MRB / SCRAP           cikar ve sadece-goster kutulari
+       SERIAL LIST                  yapistirilan seri listesi
+       BY WIP PARTS                 sadece sahada duranlar
+
+   Tek fark: TARIH ARALIGI YOK.  Bu sayfanin zamani "kac gun ileri"
+   oldugu icin HOW FAR AHEAD kutusu duruyor (2 WK / 1 MO / 3 MO
+   dugmeleriyle).
+
+   PART cipleri yalniz ROTASI OLAN parcalari gosterir - rotasi
+   olmayanin adimi ve standart suresi yoktur, tahmin edilemez.
+
+============================================================
+v49  -  TEKERLEK HATASI, B1000 YETKI, FORECAST ETIKETLERI
+============================================================
+
+1) TEKERLEKLE KAYDIRMA TAKILIP KALIYORDU  (butun sayfalarda)
+
+   SEBEP BULUNDU.  Kayan her sey (sayfa ve icindeki tablolar) tekerlegi
+   fare uzerine gelince bind_all ile kapiyor, cikinca unbind_all ile
+   birakiyordu.  unbind_all GLOBALDIR: "benim bagimi" degil, O BAGI
+   siler.  Yani:
+
+       sayfaya gir    -> sayfa baglar
+       tabloya gir    -> tablo baglar     (sayfanınkini ezer)
+       tablodan cik   -> unbind_all       (HEPSINI siler)
+
+   O andan itibaren tekerlek hicbir yerde calismiyordu; imlec baglayan
+   baska bir seyin uzerine gelene kadar.  "Tablolar asagi kayip orada
+   kaliyor" tam olarak buydu.
+
+   Artik TEK bir bag var: bir kez kuruluyor, hic kaldirilmiyor, ve
+   imlecin altindaki seye gore hangi tablonun/sayfanin kayacagina karar
+   veriyor.  Ctrl + tekerlek buyutmesi aynen calisiyor.
+
+2) B1000: ADMIN OLMAYAN ARTIK DEGISTIREMEZ GORUNMUYOR
+
+   CARRY CONTENTS ve LOCK kutucuklari herkeste tiklanabiliyordu.
+   Tiklaninca uyari cikiyordu ve plan degismiyordu - ama KUTUCUK
+   ISARETLI KALIYORDU.  Ise yaramis gibi gorunmesi, hic sunmamaktan
+   kotudur.
+
+   Artik EDIT modunda olmayan ya da admin olmayan icin kutucuklar ve
+   detay alanlari GRI.  Yanlislikla tiklanirsa kutucuk eski haline
+   geri doner.
+
+3) B1000: BASKASININ KAYDETTIGI PLAN ARTIK OKUNUYOR
+
+   Plan SADECE sayfa kurulurken okunuyordu.  Bir admin butun sahayi
+   yeniden cizse, acik olan diger kopyalar eskisini gostermeye devam
+   ediyordu - ekranda bunu soyleyen hicbir sey olmadan.
+
+   Artik ortak veri degistiginde plan da yeniden okunuyor.  KAYDEDILMEMIS
+   DUZENLEMENIZ VARSA DOKUNULMAZ: sizinki korunur ve "RELOAD'a basin"
+   diye yazar.
+
+4) FORECAST: ETIKETLER NE OLDUKLARINI SOYLUYOR
+
+   "waiting / arriving / backlog / idle" kendi baslarina bir sey
+   anlatmiyordu.  Artik:
+
+       work to do             o gun yapilmasi gereken is
+                              (dunden kalan + bugun gelen)
+       new work arriving      o gun gelen is
+       left over at day end   gun sonunda kalan, yarina gecen
+       machine hours unused   tezgah var, baglanacak parca yok
+       parts queued           hazir olup sira bekleyen parca SAYISI
+
+   "Only parts still on the floor" -> "BY WIP PARTS" (diger sayfalarla
+   ayni isim).
+
+5) FORECAST: ASIRI YUKU GORMEK
+
+   CLOSER TO REALITY modunda "calisan saat" kapasiteyi ASAMAZ - bir
+   tezgah gununden fazlasini yapamaz.  Orada asiri yuk KUYRUK olarak
+   gorunur, o yuzden "parts queued" secenegi eklendi.
+
+   Test verisi de gercekci tezgah sayilariyla yeniden kuruldu; artik
+   dolan gruplar var:
+       FINISH     %100 dolu, en cok 313 parca kuyrukta
+       COATING    %100 dolu, 8 parca kuyrukta
+       WELD       %98,  MACHINING %98
+   Bir onceki test verisi cok genisti ve hicbir grup dolmuyordu.
+
+============================================================
+v48  -  FORECAST SAYFASI: HIZ
+============================================================
+
+OLCULEN: sayfa acilisa yuk BINDIRMIYOR - kurulumu 0.00 sn ve acilista
+tek bir sorgu ekliyor (53 -> 54).  Orada duzeltilecek bir sey yoktu.
+Ama sayfanin KULLANIMINDA iki israf vardi:
+
+1) SUNUM DEGISIKLIGI BUTUN SIMULASYONU BASTAN KOSTURUYORDU
+
+   SHOW secimi (waiting / arriving / backlog / idle) ve TEZGAH GRUBU
+   filtresi sadece cizimi degistirir - hesabi degil.  Ama her tiklama
+   butun tahmini bastan hesapliyordu.
+
+   Artik hesap ile cizim ayri.  Sonuc, onu DEGISTIREN seylere gore
+   anahtarlanip saklaniyor: gun sayisi, mod, kapasite kaynagi, WIP
+   secimi, parca secimi, veri surumu ve vardiya kurallari.  Bunlardan
+   biri degisirse yeniden hesaplanir; SHOW ve grup filtresi sadece
+   yeniden cizer.
+
+   Test bunu sayarak dogruluyor: uc SHOW tiklamasi -> 0 yeniden hesap;
+   mod degistirmek -> yeniden hesap.
+
+   Ayrica grup filtresi artik CIZIMDE uygulaniyor, yani filtreyi
+   degistirmek de hesap gerektirmiyor.
+
+2) PARCA FILTRESI EKLENDI  (PARTS dugmesi)
+
+   Tahminin butun maliyeti, HER PARCANIN butun serilerini rotada
+   yurutmekten gelir.  Tek bir parcaya bakacaksaniz gerisini hic
+   hesaplamamak en buyuk kazanctir.
+
+   Test verisinde: butun parcalar 0.28 sn / 410 seri, tek parca
+   0.06 sn / 205 seri.  Gercek veride parca sayisi arttikca fark
+   dogru orantili buyur.
+
+DOGRULUK: uc modun sonuclari degismedi (test_forecast_plan 68 kontrol,
+test_forecast_gui 33 kontrol, test_lead_forecast 35 kontrol - hepsi
+geciyor).
+
+============================================================
+v47  -  FORECAST: "CLOSER TO REALITY"  (tezgah tezgah)
+============================================================
+
+YENI UCUNCU MOD: CLOSER TO REALITY (machine by machine)
+
+Digerleri isi bir GRUBUN gunluk saat havuzuna dagitir.  Saha oyle
+calismaz: bir tezgaha bir parca baglanir ve O PARCA BITMEDEN yenisi
+baglanamaz.
+
+ORNEK (kullanicinin kendi ornegi, testte bire bir dogrulaniyor):
+    70'ten inen parca 80'e baglanacak.  80 = 26 saat.
+    Tezgah gunde 22.5 saat calisiyor.
+      1. GUN  tezgahin 22.5 saatinin TAMAMI bu parcada, bosta 0
+      2. GUN  ayni parca 3.5 saat daha, sonra yeni parca 10 saat
+              -> 13.5 saat calisan, 9 SAAT BOSTA
+
+NASIL CALISIR
+  - Her tezgah bir KAYNAKTIR; grupta kac tezgah varsa o kadar.
+  - Simulasyon BOS bir atolyeden degil, SAHANIN SU ANKI HALINDEN
+    baslar: su an bir tezgahta olan parca o tezgahi kalan suresi
+    (standart - girilen) kadar bastan isgal eder.
+  - Parcalar OLAY SIRASIYLA islenir: once hazir olan once tezgah bulur.
+  - Bir parca bir adimi BITIRMEDEN sonraki adim icin siraya girmez.
+  - Calisilmayan gunler zaman ekseninde hic yoktur: hafta sonu isi
+    uzatmaz, erteler.
+
+NE GOSTERIR (her grup, her gun)
+    CUTTING   tezgahlarin gercekten kestigi saat
+    IDLE      kapasite - cutting:  TEZGAHINIZ VAR AMA BAGLANACAK PARCA
+              YOK.  "Kapasitem var ama kullanamiyorum" ilk kez burada
+              gorunur; SHOW > idle ile bakilir.
+    started / finished   o gun tezgaha baglanan / inen parca sayisi
+
+BUNU NEDEN EKLEDIK - LEAD MODUNUN SORUNU
+  Lead suresi, parcalarin o adima TARIHSEL OLARAK ne zaman ulastigini
+  soyler; yani atolyenin kuyrugunu ZATEN ICINDE TASIR.  Sonra onu bir
+  kez daha kapasiteye karsi kuyruga sokmak AYNI KUYRUGU IKI KEZ saymak
+  demekti.  Olculen: 15.530 saatlik is icin 196.027 saat devir - isin on
+  iki kati.  Lead modunda BACKLOG sutunu "normalden ne kadar kotu"
+  olarak okunmali, mutlak bir kuyruk olarak degil.  Mutlak cevap icin
+  CLOSER TO REALITY modu kullanilmali.
+
+AYRICA DUZELTILDI
+  STANDART MOD ARTIK SON GUNE YIGMIYOR.  Kapasitesi tanimsiz ya da
+  pencere boyunca dolu olan bir grubun isi, son gune dokuluyordu ve
+  tabloda sahte bir tepe cikiyordu.  Artik o is "pencereye sigmayan"
+  olarak ayrica bildiriliyor.
+  KAPASITESI TANIMSIZ GRUP artik acikca yaziliyor ("NO CAPACITY DEFINED
+  for: ...") - sessizce yanlis bir sayi uretmek yerine.
+
+============================================================
+v46  -  FORECAST: TEZGAH / ADAM SAYISINI ELLE GIRME
+============================================================
+
+FORECAST sayfasinda "CAPACITY FROM" secimi geldi:
+
+    B1000 LIVE (what is drawn)   plandaki tezgahlar sayilir - eskisi
+                                 gibi, ve varsayilan bu.
+    Numbers I type below         sag tarafta her tezgah grubu icin
+                                 TEZGAH ve ADAM kutulari acilir.
+
+NEDEN: tahmin HENUZ OLMAMIS bir donemi sorar - "gelecek ay MASK'a dort
+kisi daha koysam ne olur".  Bunu plani yeniden cizerek soramazsiniz.
+
+  - Kutular ilk acilista PLANDAN doldurulur, yani sifirdan yazmaniza
+    gerek yok; sadece degistirmek istediginizi degistirirsiniz.
+  - Bir sayiyi degistirdiginiz anda tablo yeniden hesaplanir.
+  - Bir grupta ADAM sayisi 0 ise TEZGAH sayisi gecerlidir.  Yani
+    cogu grup icin ikisini ayni yazmaniz (ya da adami bos birakmaniz)
+    yeterli - fark sadece adamla calisan istasyonlarda ortaya cikar.
+  - Girilen sayilar veritabaninda saklanir: paylasilan bir plan
+    varsayimidir, kisiye ozel degil.
+  - Tablodaki sutun artik "MACHINES / PEOPLE": 12 / 24 gibi okunur.
+
+TEST VERISI HAZIR GELIYOR
+  Klasordeki rw_data.db artik tanimli bir B1000 PLANI ile geliyor: her
+  is merkezi grubu icin gercek WC kodlariyla 80 tezgah, 7 bekleme
+  bolgesi, ve vardiya kurallari (7.5 sa x 3, Pzt-Cmt) kurulu.  Acip
+  dogrudan FORECAST'e bakabilirsiniz; tezgah tanimlamaniza gerek yok.
+  Bir onceki hali rw_data.db.oncesi olarak duruyor.
+
+============================================================
+v45  -  FORECAST: DEVIR, IKI YONTEM, ADAM KAPASITESI
+============================================================
+
+1) VARDIYA GUNLERI ARTIK TEK TEK SECILIYOR
+
+   DATA & SETTINGS > SHOP RULES icinde yedi kutucuk: Pzt Sal Car Per
+   Cum Cmt Paz.  Calistiginiz gunleri isaretlersiniz; "haftada kac gun"
+   sayisi artik isaretlediginiz kadardir.
+
+   NEDEN: eskiden sadece bir SAYI vardi ("haftada 6 gun") ve program
+   hangi alti gun oldugunu Pazartesiden sayarak TAHMIN ediyordu.  Cuma
+   kapali bir atolyede bu tahmin her hafta yanlistir - ve uzerine kurulu
+   her kuyruk ve her tahmin onunla birlikte yanlis olur.
+
+2) FORECAST: DEVIR  (asil eksik buydu)
+
+   16 tezgah, gunde 360 saat kapasite, o gune 500 saat is geliyorsa:
+   360'i yapilir, 140'i YARIN HALA ORADADIR - ustune yarinin isi de
+   gelir.  Eski tablo sadece O GUN GELEN isi gosteriyordu, o yuzden
+   asiri yuklu bir grup sadece "yogun" gorunuyor, her gun biraz daha
+   geriye dustugu gorunmuyordu.
+
+   Artik her grup icin her gun su hesaplanir:
+
+       BEKLEYEN  = dunden kalan + bugun gelen
+       YAPILAN   = min(bekleyen, kapasite)
+       DEVIR     = bekleyen - yapilan      -> yarina gecer
+
+   Tablonun ustundeki SHOW ile hangisini gormek istediginizi secersiniz:
+       waiting   o gun yapilmasi gereken is  (varsayilan)
+       arriving  o gun gelen is
+       backlog   gun sonunda hala bekleyen is
+
+   Renk her zaman DOLULUK orani (bekleyen / kapasite).  Calisilmayan
+   gunler gri: o gun hicbir is yapilmaz, hepsi ertesine kalir.
+
+3) FORECAST: IKI FARKLI YONTEM
+
+   Ayri sorulara cevap verirler ve ikisi de gerekir:
+
+   BY LEAD TIME  (what usually happens)
+       Parcalar tarihsel olarak bu adima ne zaman ulasiyorsa o gun.
+       Sahanin butun beklemeleri, sira ve aksamalari zaten o surelerin
+       ICINDEDIR - "normalde ne oluyor" sorusunun cevabi.
+
+   BY STANDARD TIMES  (work it through)
+       Her adim standart suresini alir, bir tezgahta bir parca olur, ve
+       parca sonraki gruba SIRA BEKLER.  Takvim ileri dogru yurutulur:
+       bir grup Cumaya kadar doluysa, o parca Cuma baslar.  Bekleme
+       varsayilmaz, hesaptan cikar - "hicbir sey ters gitmezse ne
+       olur" sorusunun cevabi.
+
+4) FORECAST: TEZGAH GRUBU FILTRESI
+
+   MACHINE GROUPS dugmesi ile sadece sectiginiz gruplari gorursunuz.
+   Clear hepsine doner.
+
+5) B1000: TEZGAHTA "PEOPLE" ALANI
+
+   Bazi istasyonlar planda tezgahtir ama cikardigi is uzerine kac kisi
+   koydugunuza baglidir - MASK / DEMASK gibi.  Tezgah secilince detay
+   panelinde PEOPLE alani cikar.
+
+       bos ya da 0  ->  normal tezgah, 1 birim kapasite
+       3            ->  uc kisi, uc birim kapasite
+
+   FORECAST kapasiteyi buna gore hesaplar:
+       KAPASITE = birim x vardiya suresi x vardiya sayisi
+   Tabloda MACHINES sutunu "2 (6)" gibi yazar: iki tezgah, alti birim.
+
+6) FORECAST USTUNDEKI BILGI YAZISI
+
+   Artik aritmetik degil, SIZIN TANIMLADIGINIZ VARDIYA yaziyor:
+   kac saat, kac vardiya, ve HANGI GUNLER - DATA & SETTINGS'ten
+   okunarak.
+
+7) HAFTALIK KAPASITE SUTUNU
+
+   Gunluk kapasitenin yanina haftalik kapasite sutunu eklendi:
+       haftalik = gunluk x isaretli calisma gunu sayisi
+   Is haftalik planlandigi icin iki hafta bakarken haftalik rakam
+   dogrudan gorulebiliyor.
+
+============================================================
+v44  -  LEAD TIME, FORECAST SAYFASI, HERKESI CIKARMA
+============================================================
+
+1) TOPLAM LEAD TIME ARTIK BAS-SON OLCULUYOR
+   (REMAINING'in "Insufficient data" demesi bu yuzdendi)
+
+   ESKIDEN: lead time, traveler'in "onceki operasyon" baglantilarindan
+   adim adim toplaniyordu.  Bu, HER araligin IKI ucunun da AYNI seride
+   girilmis olmasini VE rotanin her adiminda bir onceki operasyonun
+   yazili olmasini gerektirir.  Gercek rotalar ikisini de yapmaz -
+   kimsenin giris yapmadigi adimlar, onceki operasyonu bos adimlar - o
+   yuzden aralklarin cogunun ortalamasi hic cikmiyor ve REMAINING
+   neredeyse her parcada "Insufficient data" diyordu.
+
+   ARTIK (sizin tarifiniz):
+
+       BIR SERININ LEAD TIME'I =
+           SON operasyona yapilan SON zaman girisi
+           eksi
+           ILK operasyona yapilan ILK zaman girisi
+       (saatler dahil)
+
+   Seri basina iki damga yetiyor, ve cevap cikiyor.
+
+   REMAINING de buna gore:  parcalarin her adima ULASMA suresinin
+   ortalamasi ogreniliyor (lead egrisi), ve
+
+       kalan = toplam lead time  -  bulundugu adima ulasma suresi
+
+   Hic ulasilmamis bir adim, ulasilmis en yakin onceki adimi kullanir -
+   yani veri boslugu dogrulugu azaltir, cevabi tamamen goturmez.
+
+   OLCULEN (test verisi, 400 seri):
+       ONCE   400 satirin 180'i "Insufficient data"
+       SONRA  0 satir.  Toplam lead 952.8 saat (39.7 gun), 380 seriden.
+       Elle hesapla birebir ayni ciktigi ayrica test ediliyor.
+
+   NOT: Bu surum wf_part_data'ya ILK GIRIS sutunlarini ekliyor, o yuzden
+   ilk acilista tablo bir kez yeniden kuruluyor (birkac saniye surebilir,
+   veri kaybi yok - zaten ops/rw satirlarindan hesaplaniyor).
+
+2) WATERFALL: "EN ILERI N PARCA" FILTRESI
+
+   VIEW / OPTIONS icinde: "Furthest along, top [N] parts".
+   Rotada en ileri gitmis N parcayi birakir.
+
+   Bir operasyonda DURAN parcalar once gelir; rotayi tamamen bitirmis
+   olanlar listeyi doldurmasin diye altta kalir (soru "hangileri
+   cikmak uzere" - biten parca zaten bir operasyonda degildir).
+
+3) PART BOTTLENECK ARTIK WATERFALL ILE AYNI MANTIKTA
+
+   BEKLEYEN:  Parcanin yeri, rotada giris yapilmis EN ILERI
+              operasyondur - waterfall'daki kuralin aynisi.  O
+              operasyon bitmemisse (standart sureye ulasilmamissa)
+              parca ORADADIR ve ORADA sayilir; tezgahta kesiliyor
+              olmasi farketmez, is o operasyondadir.
+
+              ESKIDEN: her zaman "en ileri + 1"de sayiliyordu.  Yani
+              26 saatlik bir kesimin yarisindaki parca, HENUZ ISI
+              VERILMEMIS bir sonraki tezgahin kuyrugunda gorunuyordu.
+
+   TAMAMLANAN: O operasyonun standart suresine ULASILMIS olmasi ve
+              girisin o gun yapilmis olmasi.  Tamamlanma, son girisin
+              yapildigi gune yazilir.
+
+              ESKIDEN: her giris bir tamamlanma sayiliyordu - 26
+              saatlik bir adim bes vardiyada girildiyse bes ayri gunde
+              bes "tamamlandi" olarak raporlaniyordu, parca hicbirinde
+              tezgahtan inmemisken.
+
+   Standart suresi olmayan adimlarda karsilastiracak bir sey yok; orada
+   eski davranis (giris = tamamlandi) korunuyor.
+
+4) DIGER KULLANICILARI GERCEKTEN CIKARABILME
+
+   SEBEP BULUNDU.  "Kapan" istegi gittiginde karsi kopya bir MESAJ
+   KUTUSU aciyordu - ve mesaj kutusu birinin TIKLAMASINI bekler.  Oysa
+   admin'in birilerini atma sebebi zaten o makinelerin basinda kimsenin
+   olmamasidir.  Kopya orada, kutu acik, dosyayi tutmaya devam
+   ediyordu; admin tarafindan bakinca "atamiyorum" gorunuyordu.
+
+   ARTIK: tiklama beklemeyen, kendi kendine sayan bir pencere cikiyor
+   ve program on saniye sonra kimse orada olmasa da kapaniyor.
+   (Basindaki kisi icin "CLOSE NOW" dugmesi var.)
+
+   AYRICA - BAKIM MODU (USERS AND OPEN SESSIONS ekraninda):
+
+       Tek tek "kapan" demek sadece O ANDA calisan kopyalara ulasir.
+       Yarim dakika sonra programi acan biri, degistirmeye calistiginiz
+       dosyanin icine geri girer.
+
+       MAINTENANCE MODE ON  ->  admin disinda HER kopya kendini kapatir
+                                VE yeni kimse programi acamaz.
+       TURN MAINTENANCE OFF ->  normale doner.
+
+   Yeni bir surum kurmadan once acin, is bitince kapatin.
+
+5) YENI SAYFA: FORECAST
+
+   Belirlediginiz gun sayisi icin, her TEZGAH GRUBUNUN gunluk saat
+   yukunu ve doluluk oranini gosterir.
+
+   KAPASITE nereden geliyor:
+       B1000 planindaki tezgah adedi  x  vardiya suresi  x  vardiya
+       sayisi   (SHOP RULES'tan)
+       Ornek: HNK'da 16 tezgah, 7.5 saat, 3 vardiya = 360 saat/gun.
+       Haftada kac gun calisildigi da SHOP RULES'tan okunur; calisilmayan
+       gunler gri gosterilir ve o gune dusen is bekler.
+
+       Tezgah adedi plandan sayilir, o yuzden WC KODU GIRILMEMIS
+       tezgah sembolleri sayilmaz - LIVE'da oldugu gibi.
+
+   YUK nereden geliyor:
+       Sahadaki her serinin BITMEMIS her rota adimi, o adimin standart
+       suresi kadar is demektir.  Uzerinde bulundugu adimda sadece
+       KALAN kismi sayilir.
+       Isin hangi GUN gelecegi, lead egrisinden hesaplanir (bkz. 1.
+       madde): parcalarin bulundugu adimdan o adima ulasmasi tarihsel
+       olarak ne kadar suruyorsa, o kadar gun sonra.
+
+   Tabloda her grup icin bir satir, her gun icin bir sutun; hucrede
+   saat ve doluluk yuzdesi. Yesil: yer var.  Kirmizi: kapasite asiliyor.
+   En altta butun grubun toplami.  EXPORT TO EXCEL ile disari alinir.
+
+   Simdilik gunluk doluluk gosteriliyor; detaylari sonra ekleriz.
+
+============================================================
+v43  -  ORTAK VERI, GRUPLAMA, ZOOM, OPERASYON SECIMI
+============================================================
+
+1) BASKASI VERI YUKLEYINCE ACIK HESAPLAR DA YENILENIYOR
+
+   Sorun buydu: biri veri yukledigi zaman diger kopyalarda SADECE
+   RW ANALYSIS sayfasi yenileniyordu.  Waterfall, Cause Op,
+   Bottleneck, MRB ve B1000 dunku veriyi gostermeye devam
+   ediyordu - ve ekranda bunun eski oldugunu soyleyen hicbir sey
+   yoktu.
+
+   Artik ortak dosyada bir degisiklik goruldugunde:
+     - butun sayfalarin parca listeleri ve filtreleri yenileniyor,
+     - acik olmayan sekmeler "bayat" isaretleniyor ve bir sonraki
+       acilislarinda bastan hesaplaniyor,
+     - EKRANDA DURAN SAYFA hemen yeniden hesaplaniyor (kimse zaten
+       baktigi sekmeye tekrar gecmez).
+
+   Yukleyen bilgisayar ile haberi alan bilgisayarlar artik aynı
+   yoldan yenileniyor, yani ikisi de ayni duruma geliyor.
+
+2) SUTUN BASLIGINA SAG TIK: BUNA GORE GRUPLA   (RW ANALYSIS)
+
+   PER RAW DATA tablosu her zaman SERI NUMARASI kutularindan
+   olusuyordu.  Dogru varsayilan, ama tek soru degil.
+
+   Artik herhangi bir sutun basligina SAG TIKLAYIP "GROUP BY ..."
+   denebiliyor:  PART NO, SERIAL NO, REJECT OP, REJECT OP
+   DESCRIPTION, CAUSE OP, CAUSE OP DESCRIPTION, WORK CENTRE, WC
+   DESCRIPTION, FW WEEK, CAUSE OP WORK CTR / MACHINE, EMPLOYEE.
+
+   - Her kutunun altinda, baz halde oldugu gibi TOPLAM satiri var.
+   - Kutular en cok saatten aza dogru siralanir.
+   - SERIAL NO secmek baz haline dondurur.
+   - Panelin ustunde "grouped by ..." yazar.
+
+   Onemli: gruplama ANALIZI YENIDEN CALISTIRMAZ.  Ayni kayitlar
+   sadece farkli kutulara dagitilir, o yuzden veritabanina hic
+   gidilmez ve anlik olur.  Test, gruplama degisince KAYIT SATIRI
+   SAYISININ DEGISMEDIGINI ayrica dogruluyor - yani hicbir satir
+   kaybolmuyor.
+
+3) CTRL + TEKERLEK: TABLOYU BUYUT / KUCULT
+
+   Her sayfada calisir.  Onemli fark: tekerlek artik altindaki TEK
+   tabloyu degil, SAYFAYI buyutur ve sayfanin ZOOM gostergesi de
+   onunla birlikte hareket eder.  (Eskiden tablo buyuyor ama
+   gosterge 100% yaziyordu.)
+
+   B1000 planinda hic tekerlek baglantisi yoktu; en cok orada
+   gerekiyordu.  Artik:
+       Ctrl + tekerlek  ->  plani buyut/kucult
+       tekerlek         ->  plani yukari/asagi kaydir
+
+4) BOTTLENECK: OPERASYONA TIKLAYINCA SATIR YANIYOR
+
+   Gun gun tablo haftalarca yana kayiyor ve tek bir operasyonu
+   takip etmek goz karariydi.  Artik satirina tiklayinca o
+   operasyon MAVI YANIYOR - hem gun gun tabloda hem LONGEST WAIT
+   tablosunda ayni anda, boylece ikisi birbirine karsi
+   okunabiliyor.  Tekrar tiklayinca soner.
+
+5) ACILIS: NEREDE GECTIGI ARTIK EKRANDA YAZIYOR
+
+   "Kirk saniye suruyor" ile "kod bir saniye suruyor" ikisi de
+   dogruydu ve hicbiri ise yaramiyordu, cunku pahali kisim bu
+   programin ilk satiri calismadan ONCE oluyor: paketlenmis
+   uygulamanin kendini acmasi, DLL'lerini yuklemesi ve bu sirada
+   virus taramasindan gecmesi.
+
+   DATA & SETTINGS sayfasina "START-UP TIME" kutusu eklendi:
+
+       TOTAL            38.4 s
+         program files  34.1 s     <- bu satir buyukse sebep budur
+         database open   1.9 s
+         pages           2.4 s
+
+   Program klasoru ortak surucudeyse kutu ayrica UYARI verir:
+   Windows her acilista programin butun dosyalarini agdan yukler.
+
+       dist\WIP_TRACKER klasorunu bilgisayarin KENDI DISKINE
+       kopyalayin.  Sadece rw_data.db ortak klasorde kalsin.
+
+   AYRICA bu surumde acilistan iki is daha cikarildi: MRB/SCRAP/
+   TECO sayfasi ve B1000 plani, hic acilmamis olsalar bile
+   acilista tam hesap yapiyorlardi (butun seri numarasi listesi,
+   ve "her seri nerede" sorusu - programin en pahali sorusu).
+   Artik ilk acildiklarinda hesaplaniyorlar.
+
+       acilista calisan sorgu:  66  ->  53
+       sayfa kurulumu:        0.65 s -> 0.28 s
+
+============================================================
+v42  -  COK KULLANICILI HIZ: DONMALARIN SEBEPLERI
+============================================================
+
+Sikayet: acilislarda, analiz sayfasi gecislerinde ve OZELLIKLE TECO
+girip kaydetmede donma - hele birden fazla kisi ayni anda
+kullanirken.  Uc ayri sebep bulundu, ucu de olculdu.
+
+1) MRB / SCRAP / TECO LISTESI  -  ASIL SEBEP
+
+   Liste her satir icin AYRI AYRI "bu seri en son nerede basildi"
+   diye soruyordu.  Isaret basina IKI sorgu, ve her biri uretim
+   adimlari tablosunun tamami uzerinde bir gruplama.
+
+   150 kayitli bir listede:
+
+       ONCE    450 sorgu
+       SONRA     3 sorgu          (sonuclar birebir ayni)
+
+   Paylasilan klasorde her sorgu agda bir gidis-donustur; 450
+   gidis-donus, SAVE'e her basista birkac saniyelik donmus ekran
+   demekti.  Artik hepsi tek seferde soruluyor.
+
+2) BIR TECO KAYDI IKI AYRI YAZMA ISLEMIYDI
+
+   Once notun kendisi, sonra AYRI bir yazma ile "diger kopyalar
+   yeniden baksin" sinyali.  Agda iki kilit, iki disk yazimi.
+
+       ONCE   8 ifade / 2 islem
+       SONRA  5 ifade / 1 islem
+
+   Ayrica o sinyal sayaci once OKUNUP sonra yaziliyordu.  Iki kisi
+   ayni anda kaydederse ikisi de ayni sayiyi okuyup ayni sayiyi
+   yazabiliyordu - yani bir kisinin degisikligi digerlerine hic
+   haber verilmemis olabiliyordu.  Sayac artik dogrudan SQL icinde
+   artiyor, kaybolmuyor.
+
+3) ACILISTA HERKES KILIT ALIYORDU
+
+   Program her basladiginda journal ayarini KOSULSUZ yaziyordu ve
+   bu ayar dosyayi tek basina ister.  Sabah bes kisi ayni anda
+   acinca, zaten dogru olan bir ayar icin sirayla bekliyorlardi.
+   Artik once okunuyor, sadece gercekten degismesi gerekiyorsa
+   yaziliyor - normalde hic kilit alinmiyor.
+
+4) ONBELLEK ARTIK KALABALIKTA DA ISE YARIYOR
+
+   v41'de gelen okuma onbellegi HER yazmada tamamen atiliyordu.
+   Ama her kopya kirk saniyede bir "buradayim" yaziyor; yani
+   birden fazla kisi varken onbellek surekli atiliyor ve hic ise
+   yaramiyordu.
+
+   Artik sadece onbellegin CEVABINI TUTTUGU tablolara yazilinca
+   atiliyor.  Oturum kalp atisi, hesap degisikligi ve ozel notlar
+   hicbir cevabi bayatlatmaz.
+
+   Bunun bayat veri gostermedigi ayrica test ediliyor
+   (test_read_cache, 23 kontrol): degisen isaret hemen gorunuyor,
+   silinen hemen gidiyor, baska bir kopyanin yazdigi kaciril miyor.
+
+HATIRLATMA: acilis suresi icin en buyuk fark hala dist\WIP_TRACKER
+klasorunu her bilgisayarin KENDI DISKINE kopyalamaktir.  Sadece
+rw_data.db ortak klasorde kalsin.  Ayrintisi v41 bolumunde.
+
+============================================================
+v41  -  ADMIN KURALI, FILTRE DENETIMI, ACILIS HIZI
+============================================================
+
+1) VERI KILIDI KALDIRILDI, YERINE ADMIN KURALI GELDI
+
+   Eskiden her veri setinin bir kilidi vardi: paylasilan bir sifreyle
+   kurulan, herkesin takildigi, ve aslinda kimseyi korumayan bir
+   padlock.  Kimin degistirebilecegi sorusunu ZATEN HESAP
+   cevapliyordu.  Kilit kalkti, kural sadelesti:
+
+       ADMIN yukler, siler, traveler'i duzenler, ayarlari degistirir,
+             B1000 planini cizer.
+       DIGER HERKES sayfayi okur - ama tek bir bayti degistiremez.
+
+   DATA & SETTINGS sayfasinda admin olmayan kisi:
+     - yazan her dugmeyi ve kutuyu PASIF gorur,
+     - sayfanin ustunde "READ ONLY - you are signed in as ..."
+       seridini gorur,
+     - bir yolunu bulup komutu tetiklese bile reddedilir.
+
+   Kural iki kere uygulaniyor: ekranda pasiflik (bos yere
+   tiklanmasin diye) ve fonksiyonun basinda kontrol (asil koruma).
+
+   "database is locked" hatasindan giris yapamama sorunu bu
+   kilitle ilgili degildi ve v34'te ayrica cozulmustu; bu degisiklik
+   onun uzerine, kilidin kendisini kaldiriyor.
+
+   ESKI VERITABANLARI: acilista butun kilit kayitlari otomatik
+   siliniyor.  Elle bir sey yapmaniza gerek yok.
+
+2) KULLANICI BILGILERINI INDIRME / GERI YUKLEME  (admin)
+
+   Hesaplar paylasilan veritabaninda durur, baska hicbir yerde.  O
+   dosya giderse sadece veri degil HERKESIN GIRIS YOLU da gider.
+
+   Sag ust kose > hesap dugmesi > USERS AND OPEN SESSIONS:
+
+     DOWNLOAD USER INFORMATION   butun hesaplari bir .json dosyasina
+                                 yazar.  Kapatilmis hesaplar dahil.
+     UPLOAD USER INFORMATION     geri yukler.  Iki sekilde sorar:
+
+        "Overwrite the accounts that already exist here?"
+        EVET -> dosya kazanir: rol ve sifre dosyadan geri gelir.
+                Veritabani sifirdan kurulduktan sonraki restore budur.
+        HAYIR -> sadece BURADA OLMAYAN hesaplar eklenir, var olan
+                hicbir hesaba dokunulmaz.  Yedek alindiktan sonra
+                birisi sifresini degistirmisse onu ezmemek icin.
+
+     Iki durumda da KIMSE SILINMEZ.  Yedekte olmayan biri (sonradan
+     tanimlanmis olabilir) oldugu yerde kalir.
+
+   DOSYANIN ICINDE NE VAR: sifrenin KENDISI yok - saklanan sey tuzlu
+   bir ozet (hash).  Ama o ozet kisiyi ICERI ALAN seydir.  Yani
+   dosya yine de her hesabin anahtaridir:
+
+       VERITABANININ OLMADIGI BIR YERDE, BASKALARININ ULASAMAYACAGI
+       SEKILDE SAKLAYIN.
+
+3) HER ANALIZ SAYFASINDAKI FILTRELER DENETLENDI
+
+   Ayni hata uc kez cikmisti: dev bir sayfa kodunun icinde bir filtre
+   kurulur, kutucuga baglanir, ve yenileme yolunda HIC OKUNMAZ.
+   Kutucuk calisir gorunur, sayi degismez, hicbir yerde hata da
+   cikmaz.
+
+   Artik testle kanitlaniyor.  Test kutucuga degil, EKRANDA GORUNEN
+   SERI NUMARALARINA bakiyor: filtre cevrilir, gorunen seriler
+   yeniden sayilir.  WATERFALL, RW ANALYSIS, CAUSE OP ve BOTTLENECK
+   sayfalarinin her birinde EXCLUDE TECO/MRB/SCRAP, ONLY, SERIAL ve
+   BY WIP PARTS filtrelerinin hepsi tek tek surulup dogrulandi.
+
+   Sonuc: 65 kontrol, hepsi gecti.  Su an bagli olmayan filtre yok.
+
+4) DOCK + FILTRE HATASI  (bulundu ve duzeltildi)
+
+   "Tabloyu OPEN IN WINDOW ile ayri pencereye cekip filtre
+   degistirince hata veriyor; hatayi kapatinca yeni analiz zaten
+   altta duruyor."
+
+   SEBEBI panel degildi, ARDINDA BIRAKTIGI IZDI.  Bir panel ayri
+   pencereye cekildiginde TASINMAZ - govdesi ve icindeki her kontrol
+   YIKILIR, yeni pencerede yeniden kurulur.  Ama o kontrollerin
+   paylasilan bir degiskene koydugu "degisiklik izi" yikilmaz; Tk
+   onu tutar.  Degiskene bir sonraki yazista artik var olmayan bir
+   widget boyanmaya calisiliyor ve:
+
+       TclError: invalid command name ".!frame.!roundbutton"
+
+   Yazma islemi bastan beri geciyordu; patlayan sadece olu
+   boyayiciydi - "hatayi kapatinca analiz zaten orada" bundandi.
+
+   Artik bu izler KENDILERINI EMEKLIYE AYIRIYOR: boyayacaklari
+   widget gitmisse sessizce siliniyorlar.  Panelin kendisi, ayri
+   pencerede de yerindeyken de her zamanki gibi calismaya devam
+   ediyor.
+
+5) ACILIS HIZI
+
+   OLCULEN: acilista veritabanina sorulan soru sayisi
+
+       ONCE   157 sorgu
+       SONRA   66 sorgu        (%58 azalma)
+
+   Paylasilan klasorde her sorgu AGDA BIR GIDIS-DONUSTUR; yerel
+   diskte hicbir sey olan sey orada saniyelere donusur.
+
+     - Ayarlar tablosu (meta) acilista 39 kez sorulup duruyordu.
+       Artik BIR kez, tamami okunuyor ve bellekte tutuluyor.
+       data_version ve annotation_version bilerek HARIC tutuldu -
+       baska birinin degisiklik yaptigini bu ikisi haber veriyor,
+       onlari onbellege almak "hic haberdar olmamak" demekti.
+     - Parca listesi, isaret haritasi, sevk edilmis seriler, rota,
+       rework yillari: hepsi ayni sekilde bir kez okunuyor.
+     - Onbellek, veri degisebilecegi anda atiliyor: her yazmada,
+       her import sonunda, ve baska bir kopya dosyayi degistirdiginde.
+
+   AYRICA: PENCERE ARTIK SAYFALAR KURULMADAN ONCE ACILIYOR.  Eskiden
+   butun sayfalar kurulana kadar ekranda hicbir sey yoktu - bu da
+   "program acilmadi" gibi gorunuyordu.  Simdi cerceve ve sekmeler
+   hemen geliyor, altta hangi sayfanin kuruldugu yaziyor.
+
+   EN BUYUK KAZANC HALA SIZDE:  dist\WIP_TRACKER klasoru ortak
+   klasorde duruyorsa, Windows her acilista butun DLL'leri AGDAN
+   yukluyor - 40-50 saniyenin buyuk kismi budur.
+
+       dist\WIP_TRACKER klasorunu her bilgisayarin KENDI DISKINE
+       kopyalayin.  Sadece rw_data.db ortak klasorde kalsin.
+
+   Ayrica ilk acilista Windows Defender butun klasoru tarar; o
+   klasoru taramadan muaf tutmak ilk acilisi belirgin kisaltir.
+
+============================================================
+v24  -  SAGLAMLASTIRMA TURU
+============================================================
+
+1) TEST TAKIMI  (bu zipte YOK - gelistirme makinesinde durur)
+   Kaynak klasorunde tests/ altinda 18 test, 310 kontrol var.
+       python tests/run.py
+   Gercek veritabanina dokunmaz; data/ klasorundeki ornek dosyalardan
+   kendi verisini kurar.  Bir degisiklik yapildiginda once o calisir,
+   bu zip ondan sonra hazirlanir - yani elinizdeki surum testten
+   gecmis surumdur.
+
+2) "BU SERI NEREDE" SORUSU TEK YERDE
+   Kayitlar iki tabloda duruyor: uretim adimlari ops'ta, rework rw'de.
+   Bazi sayfalar sadece ops okuyordu; bir serinin en son kaydi rework
+   ise (gercek veride 800 serinin 157'si) o seri daha eski bir
+   operasyonda gosteriliyordu.
+
+   MRB/SCRAP/TECO sayfasinda bu hata hala duruyordu - orn. T000191
+   icin op 570 diyordu, dogrusu 620.  Artik butun sayfalar tek bir
+   fonksiyondan soruyor ve 800 serinin 800'unde ayni cevabi veriyorlar.
+
+3) DATA & SETTINGS > DATA HEALTH
+   Programin verdigi her cevap uc seye dayaniyor: traveler'daki
+   standart sureler, her adimdaki tezgah grubu, ve SAP'nin makine
+   suresi.  Biri eksik oldugunda program hata vermiyor, sessizce daha
+   kaba bir okumaya dusuyordu - ve bunu kimse soylemiyordu.
+
+   Artik listeliyor:  standart suresi olmayan adimlar, tezgah grubu
+   olmayanlar, COMP'ta bulunmayan grup adlari, makine suresi bos
+   kayitlar, COMP'ta olmayan tezgahlar, verisi olmayan parcalar.
+   Satira tiklayinca tam liste acilir.
+
+   Ayrica: veri programin cevaplayamayacagi durumdaysa (orn. makine
+   suresi hic yoksa) sayfalarin ustunde sari bir uyari seridi cikar.
+
+4) DATA & SETTINGS > SHOP RULES
+   Uc kural artik kaynak kodda degil, veritabaninda:
+     STANDARD TIME MARGIN   operasyon standardin ne kadar altinda
+                            bitmis sayilir (%)
+     SHIFT LENGTH           vardiya kac saat
+     MULTI-PART MACHINES    ayni anda birden fazla parca isleyen
+                            tezgah gruplari (virgulle)
+   Degistirince butun kopyalarda gecerli olur; admin sifresi ister.
+
+5) PLAN EDITORUNDE GERI ALMA
+   UNDO / REDO dugmeleri, ve Ctrl+Z / Ctrl+Y (Mac'te Cmd+Z).
+   Tasima, boyutlandirma, silme, dondurme, renk, kopyalama ve
+   isim/kod/grup degisiklikleri geri alinabilir.  Son 40 adim tutulur.
+   Kilitliyken calismaz.
+
+6) DIL VE LEJANT
+   Ekrandaki durum kelimeleri tek bir yerde toplandi ve Turkcelestirildi:
+     TEZGAHTA / bekliyor / sirada / BOSTA / bitti / WC YOK
+   B1000 detay tablosu sutunlari da Turkce.
+   WATERFALL matrisinin altina renk lejanti eklendi.
+
+============================================================
+v25
+============================================================
+
+PLAN EDITORU
+  Bolge secildiginde iki anahtar cikar:
+
+    CARRY CONTENTS   Acikken bolge tasinirken/boyutlanirken icindeki
+                     tezgahlar da gelir ve ayni oranda olceklenir.
+                     KAPALIYKEN bolge yalniz hareket eder, icindekilere
+                     hic dokunmaz - bir bolumu yerine oturturken
+                     tezgahlarin boyutunun degismesini istemiyorsaniz
+                     bunu kapatin.
+
+    LOCK             Bolge ve tasidigi her sey kilitlenir; surukleme de
+                     boyutlandirma da calismaz, kose tutamaklari cikmaz.
+                     Plan oturduktan sonra tek tusla kilitleyin.
+
+  Ayrica: bir sembol artik TAMAMEN bolgenin icinde olmak zorunda degil,
+  MERKEZI iceride olmasi yeterli.  Once tam iceride olmasi araniyordu ve
+  kenara degen tezgahlar bolgeden dusuyordu.
+
+  LIBRARY paneli katlanabilir: duzenleme cubugundaki LIBRARY dugmesi.
+  ALL MACHINES FROM DATA kaldirildi.
+
+DIL
+  Ekrandaki her sey Ingilizce.  Durum kelimeleri tek bir yerde
+  (wip_core WORDS): ON MACHINE / waiting / queued / IDLE / done / no WC.
+
+COK PARCALI TEZGAHLAR
+  Varsayilan liste: ULTRAPOLISH, CLEAN, BLUE ETCH, FPI
+  (DATA & SETTINGS > SHOP RULES'tan degistirilir.)
+
+  Eslesme artik COMP SINIFININ TAMAMIYLA yapiliyor.  Once sinif VEYA
+  tezgah adinin icinde geciyor mu diye bakiyordu - "INSPECT ALCOHOL
+  CLEAN" adli bir isleme merkezi temizleme hatti sayiliyor ve uzerinde
+  364 parca birden "kesiliyor" gorunuyordu.
+
+KULLANICI KAYITLARI
+  Sicil numarasi tamamen kaldirildi - ne soruluyor ne saklaniyor, koddan
+  da cikti.  Hesap = kullanici adi + rol + sifre.  Eski veritabanindaki
+  sicil degerleri ilk acilista temizlenir.
+
+SAYFA GECISLERI  (hiz)
+  Sekme degistirince yenileme ARTIK OLAYIN ICINDE CALISMIYOR; once sekme
+  ciziliyor, sonra is yapiliyor.  Eskiden eski sayfa ekranda kalirken
+  yenisi kuruluyordu - "gec geliyor" hissinin sebebi buydu.
+
+  Spinner sadece gercekten yavas sayfalarda cikiyor.  2 ms suren bir
+  yenileme icin spinner acip kapamak pencerenin iki kez tam yeniden
+  boyanmasi demekti; gorulen tek sey o titremeydi.  Her sekmenin son
+  suresi olculuyor, 150 ms'nin altindakilerde spinner hic cikmiyor.
+
+  live_positions() onbellege alindi (veri surumune bagli).  B1000
+  yenilemesi 278 ms -> 0 ms (veri degismedigi surece).
+
+  Olculen sayfa yenileme sureleri: RW 13 ms, CAUSE 8 ms, WATERFALL
+  14 ms, MRB 2 ms, BOTTLENECK 65 ms, B1000 283 ms (ilk), sonrasi ~5 ms.
+
+USTTEKI SARI UYARI SERIDI KALDIRILDI
+  Veri eksikligi zaten DATA & SETTINGS > DATA HEALTH'te ayrintili
+  gosteriliyor.
+
+============================================================
+v26  -  SAYFA GECISLERI
+============================================================
+
+OLCULEN (511.000 satirlik ops, ALL TIME, tum moduller acik)
+
+  gecis                         ONCE      SONRA
+  -> CAUSE OP ANALYSIS         1.50 s     0.79 s
+  -> PART BOTTLENECK           2.23 s     1.08 s
+  -> RW ANALYSIS               1.68 s     0.72 s
+  -> WATERFALL                 0.57 s     0.53 s
+  -> B1000 LIVE                1.32 s     1.30 s   (veri degismediyse ~0)
+
+NE YAPILDI
+
+1) HER SAYFA ISINI IKI KEZ YAPIYORDU
+   Bir sayfa acilinca once filtre kaynaklari yenileniyor, bu da 220 ms
+   sonrasina bir yenileme kuyruga koyuyordu; sayfa hemen bir kez daha
+   yeniliyordu ve kuyruktaki de ustune calisiyordu.  Artik kuyruktaki
+   iptal ediliyor.
+
+2) CAUSE OP TREND HER HAFTA ICIN AYRI TAM ANALIZ CALISTIRIYORDU
+   Sekiz hafta = sekiz kez butun verinin islenmesi, hepsinden tek bir
+   sayi alinip atiliyordu.  Ustelik sonuc onbellegi tek kayitlik oldugu
+   icin her hafta bir oncekini siliyor, sayfanin kendi sonucunu da
+   bosaltiyordu - sonraki sayfa da bastan hesapliyordu.
+   Artik tek bir gruplu sorgu: ayni sonuc, 114-178 kat hizli.
+
+3) OPERASYON ADI HARITASI HER YENILEMEDE BASTAN KURULUYORDU
+   Uc gruplu sorgu, biri butun uretim adimlari uzerinde.  Veri surumune
+   bagli onbellege alindi.  (CAUSE: 0.49 sn -> 0)
+
+4) BOTTLENECK AYNI VERIYI UC KEZ OKUYORDU
+   Matris, akis ve bekleme siralamasi ayni parcanin butun operasyon
+   gecmisini ayri ayri okuyordu (her biri ~0.2 sn).  Onbellege alindi.
+
+5) B1000'IN KONUM HESABI ONBELLEGE ALINDI
+   Veri degismedigi surece tekrar hesaplanmiyor.
+
+SPINNER
+  Yenileme artik sekme cizildikten SONRA basliyor, yani eski sayfa
+  ekranda kalirken yenisi kurulmuyor.
+
+  Spinner her sayfada kuruluyor ama BOYANMIYOR: hizli bir sayfada is
+  bitip kalkiyor ve hicbir sey gorunmuyor (eskiden acilip kapanmasi
+  pencereyi iki kez yeniden boyatiyordu, gorulen tek sey o titremeydi).
+  Yavas sayfalarda yenilemenin icindeki tick'ler onu ortaya cikariyor ve
+  dondurulyor.
+
+  Onceki surumdeki "en son ne kadar surmustu" tahmini kaldirildi: ayni
+  sayfa dar filtreyle milisaniye, ALL TIME'da saniyeler suruyor, dolayisi
+  ile "hizli" diye ogrenip tam gerektiginde spinner'i hic gostermiyordu.
+
+SAYFA GEC GORUNUYORDU  (fare oynatinca geliyordu)
+  Is bittiginde ekran yeniden boyanmiyordu; Tk bunu bir sonraki olay
+  geldiginde yapiyordu - fare hareketi o olaydi.  Artik bekleme durumu
+  biterken bir kez boyama zorlaniyor.
+
+============================================================
+v27  -  MRB / SCRAP / TECO  EXCEL CIKTI VE GERI YUKLEME
+============================================================
+
+EXCEL CIKTI
+  MRB / SCRAP / TECO sayfasindaki EXPORT TO EXCEL dugmesi ekrandaki
+  kayitlari iki sayfali bir dosyaya yazar:
+
+    RECORDS      seri no, tur, sebep, giris tarihi, MRB olasiligi,
+                 SCRAP olasiligi, giren kisi, olusturma ve guncelleme
+                 zamani
+    HOW TO USE   dosyanin nasil doldurulup geri yuklenecegi
+
+  Dosyayi Excel'de doldurup ya da duzenleyip geri yukleyebilirsiniz.
+
+GERI YUKLEME
+  DATA & SETTINGS > MRB / SCRAP / TECO satirindan yuklenir.  Dosya
+  turu basliklardan kendiliginden taninir, SUTUN SIRASI ONEMLI DEGIL.
+
+  Seri numarasi olmayan ve turu taninmayan (teco, mrb, scrap, repair,
+  note disinda bir sey yazan) satirlar atlanir; kac tanesinin
+  atlandigi yukleme kutugune yazilir.
+
+AYNI SERI NUMARASI ZATEN VARSA
+  Bir kayit elle yazilmis bir degerlendirmedir - dosya onu sessizce
+  degistirmez.  ADD ile yuklerken carpisma varsa once bir liste
+  gosterilir; her satirda seri numarasi, SIMDI VERITABANINDA olan ve
+  DOSYADA olan yan yana durur.  Uc secenek:
+
+    REPLACE THEM        dosyadakiler icerdekilerin uzerine yazilir
+    KEEP WHAT IS HERE   icerdekiler oldugu gibi kalir, sadece
+                        veritabaninda hic olmayan seriler eklenir
+    CANCEL THIS FILE    dosyadan hicbir sey yazilmaz
+
+  Yukleme kutugu sonucu ayirarak yazar: kac yeni, kac degistirilmis,
+  kac tanesi oldugu gibi birakilmis.
+
+  CHANGE ile yuklemek zaten "hepsini sil, dosyadakileri yaz" demektir;
+  orada soru sorulmaz.
+
+============================================================
+v28  -  KUYRUK / KESIM AYRIMI, AKIS VERIMI, ATOLYE TAKVIMI
+============================================================
+
+WATERFALL > LEAD TIME MODULU GENISLEDI
+  Modulun adi artik "LEAD TIME / QUEUE / FLOW EFFICIENCY".
+  Ayri bir modul acilmadi, ayni tabloya uc sutun eklendi:
+
+    LEAD TIME         iki giris arasinda gecen sure
+    CUTTING           varilan operasyona girilen MAKINE SURESI
+    QUEUEING          geri kalan - yani bekleme
+    FLOW EFFICIENCY   kesim / gecen sure
+
+  Tablonun ustunde rotanin tamami tek satirda ozetlenir:
+    WHOLE ROUTE: 922:31 = 579:04 cutting + 343:27 queueing
+    FLOW EFFICIENCY 62.8%
+
+  QUEUEING sutununun isi skalasi LEAD TIME'inkinden AYRIDIR.  En uzun
+  bekleyen adim her zaman en uzun suren adim degildir; gidip bakilmasi
+  gereken adim birincisidir.
+
+  Hours / Days dugmesi yeni sutunlara da isler.
+  EXPORT TO EXCEL yeni sutunlari ve ozeti tasir.
+
+BAZI ADIMLARDA * ISARETI CIKIYORSA
+  O adimda operasyona girilen makine saati, adimin kendisinden uzun
+  demektir.  Bu %300 verimli bir adim degil, iki operasyonun girisleri
+  ortusuyor demektir - parca onceki operasyonun son girisinden once bu
+  operasyonda islenmeye baslamis.
+
+  Boyle adimlar "tamami kesim, kuyruk sifir" sayilir ve ozet satiri kac
+  adimda oldugunu yazar:
+    * 12 step(s) overlap - counted as all cutting
+
+  ONEMLI: akis verimi bu yuzden bir TABAN degeridir.  Gercek verim
+  bundan dusuk olabilir, yuksek olamaz.
+
+SHOP RULES'A ATOLYE TAKVIMI EKLENDI
+  DATA & SETTINGS > SHOP RULES:
+
+    SHIFTS PER DAY    gunde kac vardiya   (varsayilan 3)
+    WORKING DAYS      haftada kac gun     (varsayilan 7, Pazartesiden)
+
+  Vardiya suresi ile carpilir; kutularin yaninda anlik olarak
+  "= 24 hours a day (round the clock)" yazar.
+
+  Kuyruk suresi artik takvim saatiyle degil ATOLYE SAATIYLE olculur:
+
+    ayar              Cuma 18:00 -> Pazartesi 08:00
+    3x8, 7 gun                    62.0 sa   (takvimin tamami)
+    3x8, 6 gun                    38.0 sa
+    3x8, 5 gun                    14.0 sa
+    2x8, 5 gun                     8.0 sa
+
+  Kapali saatleri kuyruk saymak, hafta sonuna denk gelen her adimi
+  rotadaki en kotu adim gibi gosterir.  Varsayilan 3x8 / 7 gun
+  kesintisiz calismadir; o durumda atolye saati = takvim saati ve hesap
+  eskisi gibi calisir.
+
+  Not: atolyenin gunu gece yarisinda baslar ve gunluk calisma saati
+  kadar surer kabul edilir.  Gunde 24 saat calisan bir atolyede bu
+  varsayimin hicbir etkisi yoktur.
+
+============================================================
+VERITABANI BOZULDUYSA  -  KURTARMA
+============================================================
+
+BELIRTI
+  Uygulama acilirken su hatayla kapaniyor:
+
+    Unhandled exception in script
+    ... sqlite3.DatabaseError: database disk image is malformed
+
+  Bu bir UYGULAMA HATASI DEGILDIR.  Veritabani DOSYASININ bazi
+  sayfalari okunamaz hale gelmis demektir.
+
+NEDEN OLUR
+  Veritabani bir AG PAYLASIMINDA duruyor ve birden fazla kisi ayni anda
+  yaziyor.  Windows ag paylasimlarinda (SMB) dosya kilitleme guvenilir
+  degildir: iki yazma carpistiginda ya da birinin oturumu yazma
+  ortasinda koptugunda dosya bozulur.  SQLite'in bilinen bir sinindir.
+
+------------------------------------------------------------
+ADIM ADIM NE YAPILACAK
+------------------------------------------------------------
+
+ADIM 1  -  BOZUK DOSYAYA DOKUNMAYIN
+  Agdaki rw_data.db dosyasini SILMEYIN, uzerine yazmayin, uygulamayi
+  tekrar tekrar acmaya calismayin.  Her deneme durumu kotulestirebilir.
+
+  Once bir kopyasini alin.  Komut isteminde:
+
+    mkdir C:\gecici
+    copy "\\teidom.local\5304$\LEAP\RW\DATA\rw_data.db" C:\gecici\rw_data_bozuk.db
+
+  Dosya Gezgini'nden kopyala-yapistir da olur.
+
+ADIM 2  -  HERKESI UYGULAMADAN CIKARIN
+  Kurtarma sirasinda kimse ayni dosyaya baglanmasin.
+
+ADIM 3  -  KURTARMA.py CALISTIRIN
+  Zip icinden cikan KURTARMA.py dosyasini calistirin.  Uc yolu da olur:
+
+    SPYDER (en kolay)
+      Dosyayi Spyder'da acin, YESIL OK (Run / F5) tusuna basin.
+      Arguman girmeye gerek YOK.  Program veritabaninin yerini kendisi
+      bulmaya calisir; bulursa "Bu dosya kurtarilsin mi? [E/h]" diye
+      sorar, bulamazsa asagidaki konsola yolu yazmanizi ister.
+
+      NOT: Adim 1'de aldiginiz KOPYAYI kurtarin, agdaki dosyayi degil.
+      Program agdaki dosyayi bulup sorarsa "h" deyip
+      C:\gecici\rw_data_bozuk.db yolunu yazin.
+
+    CIFT TIK
+      Dosyaya cift tiklayin.  Siyah bir konsol penceresi acilir ve
+      kurtarilacak dosyanin yolunu sorar.  Yolu yazip Enter'a basin.
+      Is bitince pencere kendiliginden kapanmaz - raporu okuyup
+      Enter'a basarak kapatirsiniz.
+
+      Cift tik hicbir sey yapmiyorsa .py dosyalari Python ile
+      iliskilendirilmemis demektir; o zaman SPYDER'da acip F5
+      (en kolayi) ya da komut isteminden calistirin.
+
+    KOMUT ISTEMI
+      py KURTARMA.py C:\gecici\rw_data_bozuk.db
+
+  Program orijinal dosyayi SADECE OKUR, hicbir seyini degistirmez.
+
+ADIM 4  -  RAPORU OKUYUN
+  Yanina iki dosya birakir:
+
+    rw_data_bozuk_KURTARILDI.db          temiz, acilabilir veritabani
+    rw_data_bozuk_KURTARMA_RAPORU.txt    hangi tablodan kac satir kurtarildi
+
+  Raporda her tablo icin KURTARILAN ve KAYIP satir sayisi yazar.
+  Kayip sayisi tahmin degildir: kurtarilan satir sayisi kaynaktaki
+  sayimla karsilastirilarak bulunur.
+
+  Elle girilen veriler once kurtarilir, cunku bunlar hicbir Excel'de
+  yoktur:
+    serial_flags   MRB / SCRAP / TECO kayitlari
+    user_note      kisisel notlar
+    layout         B1000 plani
+    layout_item    plandaki tezgahlar ve bolgeler
+    app_user       kullanicilar ve sifreler
+    meta           ayarlar (shop rules, calisma haftasi...)
+
+ADIM 5  -  YERINE KOYUN
+  Agdaki bozuk dosyayi bir kenara alin (silmeyin, ismini degistirin):
+
+    ren rw_data.db rw_data_BOZUK_20260916.db
+
+  Kurtarilan dosyayi rw_data.db adiyla ayni klasore kopyalayin.
+
+ADIM 6  -  EKSIKLERI EXCEL'DEN TAMAMLAYIN
+  Uygulamayi acin, DATA & SETTINGS > DATA HEALTH'e bakin.
+  Raporda kayip cikan veri turlerini arsivdeki Excel'lerden CHANGE ile
+  yeniden yukleyin:
+
+    SAP REWORK DISA AKTARIMI  ->  ops ve rw tablolari
+    TRAVELER                  ->  rota ve standart sureler
+    COMP / PART DATA / SEVKIYAT
+
+  Bunlar zaten Excel'de durdugu icin tam olarak geri gelir.
+
+ADIM 7  -  BIR DAHA OLMAMASI ICIN
+  - MRB / SCRAP / TECO sayfasindan EXPORT TO EXCEL alip saklayin.
+    Elle girilen tek veri budur ve artik Excel'e cikip geri yuklenebilir.
+  - Dosyanin duzenli yedegini alin (kopyala-yapistir yeterli, ama
+    uygulama KAPALIYKEN).
+  - Ayni anda tek kisi YUKLEME yapsin.  Okumak sorun degil, yazmak
+    sorundur.
+
+============================================================
+v29  -  PARCA NEREDE: ROTA BOSLUKLARI VE SIFIR SAATLIK GIRISLER
+============================================================
+
+1) ROTADA GIRILMEMIS ADIM VARSA
+   Bazi rota adimlarina hicbir zaman giris yapilmaz.  Boyle bir adim
+   hicbir zaman "tamamlandi" olmaz, ve matris parcanin yerini SON
+   TAMAMLANAN adimdan olcuyordu.
+
+   BELIRTI: 550 operasyonunda kesilen parca, 20 operasyonunda "waiting"
+   gorunuyor, aradaki her sey "not reached yet" cikiyordu.
+
+   Artik parcanin yeri EN SON GIRIS YAPILAN ADIM'dir.  Ondan onceki her
+   sey, kendi girisi olsun olmasin, gecilmis sayilir.
+
+2) SIFIR SAATLIK GIRIS
+   Saati olmayan onay kayitlari "tezgahta, 26 saatin 0'i yapildi" diye
+   okunuyordu.  Artik "o adimda BEKLIYOR" demek.
+
+     once :  ON MACHINE 0/26h
+     simdi:  waiting
+
+   Tezgahta gorunmek icin en az bir saat girilmis olmasi gerekiyor.
+   B1000'de artik hicbir tezgah sifir saatlik girisle dolu gorunmez.
+
+============================================================
+v30  -  MODULU AYRI PENCEREYE ALMA, SIKISTIRILMIS SHOP RULES
+============================================================
+
+LEAD TIME MODULU ARTIK AYRI PENCEREYE ALINABILIYOR
+  Modulun ust seridinde DETACH dugmesi var.  Basinca modul kendi
+  penceresine cikiyor, DOCK BACK ile geri geliyor.  Pencereyi
+  kapatmak da geri getirir.
+
+  Modul yeniden kurulmuyor, TASINIYOR: sayfayla birlikte yenilenmeye
+  devam ediyor, secili parca ve Hours/Days secimi korunuyor.
+  Ikinci ekrana alip matrisin yanina koyabilirsiniz.
+
+SHOP RULES SIKISTIRILDI
+  Dort sayi artik tek satirda yan yana:
+
+    STD MARGIN [50] %   SHIFT [7.5] h  x [3] /day  = 22.5 hours a day
+    WORKING DAYS [6] /week
+
+    MULTI-PART MACHINES [ULTRAPOLISH, CLEAN, BLUEETCH, FPI        ]
+
+  Panel yuksekligi yariya indi; altindaki SHARED DATABASE ve
+  WORKING WEEK bolumleri artik ekrandan tasmiyor.
+
+============================================================
+v31  -  REWORK GIRISLERI PARCAYI GERI CEKMIYOR   (sema 17)
+============================================================
+
+BELIRTI
+  Rotasini bitirmis parca yarim kalmis gorunuyordu.  600'e kadar her
+  sey girilmis bir seri birden 550'de duruyor gibi cikiyor, 560-600
+  arasi "not reached yet" oluyordu.
+
+SEBEP
+  Parcanin yeri en son zaman girisinden bulunuyordu ve buna REWORK
+  girisleri de dahildi.  Rework saati hatayi tasiyan operasyona yazilir
+  ve bu cogu zaman parca oradan gectikten COK SONRA yapilir.  600
+  bittikten gunler sonra 550'ye rework girilince en yeni damga 550'nin
+  oluyor ve parca oraya geri cekiliyordu.
+
+YENI KURAL
+  PARCANIN YERI = EN SON REWORK-DISI (URETIM) GIRISI YAPILAN OPERASYON
+
+  Rework isaretleri rotada gorunmeye devam eder ve saatlere dahildir;
+  sadece parcanin nerede oldugunu belirlemez.
+
+  ISTISNA: bir seride hic uretim girisi yoksa rework damgalari kullanilir.
+
+  ILERIDE SADECE REWORK OLAN ADIM: son uretim girisi 550'de, 560'a
+  sadece rework girilmisse parca 560'ta BEKLIYOR sayilir (560 onaylanmis
+  degil), yesil olmaz.
+
+  WATERFALL ve B1000 LIVE ayni kurali okur, ikisi de degisti.
+
+DIKKAT  -  ILK ACILIS BIRAZ UZUN SURER
+  Sema 17'ye gecerken wf_part_data tablosu bastan kurulur (rw ve ops
+  tablolarindan hesaplanir, hicbir sey kaybolmaz).  Buyuk veride birkac
+  saniye surebilir.  Bir kereye mahsustur.
+
+============================================================
+v32  -  KILIT HATASI VE B1000 PLAN YEDEGI
+============================================================
+
+"database is locked" HATASI DUZELTILDI
+
+  VERI KILIDI BUNUN SEBEBI DEGILDI.  DATA & SETTINGS'teki LOCK bir veri
+  turunu DEGISTIRMEYE kapatir; okumaya hicbir zaman kapatmadi.
+
+  Sebep SQLite'in kendi dosya kilidiydi.  Ortak klasorde biri yukleme
+  yapiyorsa dosya saniyelerce yazariya ait olur; uygulama okumalari 1,5
+  saniye bekleyip hata atiyordu.  (Kodda iki celisen ayar vardi ve
+  "tekrar dener" notu yazilmis ama tekrar deneme hic kodlanmamisti.)
+
+  ARTIK: okuma baskasinin yazmasini 30 saniyeye kadar bekler.  Bekleme
+  kisa denemelere bolundugu icin spinner donmeye devam eder.  Gercek
+  hatalar beklenmeden yukselir.
+
+  Veritabanini ACMAK da dayanikli hale getirildi - performans
+  PRAGMA'lari kilitliyken patlayip acilisi engelliyordu.
+
+  ACILIS ARTIK TRACEBACK GOSTERMIYOR.  Duz bir kutu cikar:
+    kilitse   "baskasi kaydediyor, biraz sonra tekrar acin"
+    bozuksa   "dosyaya dokunmayin, kopyasini alip KURTARMA.py calistirin"
+
+
+B1000 PLANI ARTIK DOSYAYA YEDEKLENEBILIYOR
+
+  EDIT PLAN seridinde iki yeni dugme:
+
+    BACKUP TO FILE      aktif plani bu bilgisayarda .json olarak kaydeder
+    RESTORE FROM FILE   o dosyayi YENI BIR SURUM olarak geri yukler
+
+  Plan elle cizilir ve baska hicbir yerde yoktur - hicbir SAP disa
+  aktarimi tasimaz.  Veritabani giderse o da gider.
+
+  Kaydedilenler: her ogenin turu, etiketi, tezgah kodu, konumu, boyutu,
+  DONUS ACISI, rengi, bolgelerin operasyon listesi ve TEZGAH GRUPLARI,
+  carry ve locked bayraklari.
+
+  Geri yukleme hicbir seyin ustune yazmaz: dosya yeni bir surum olur,
+  onceki surumler yerinde kalir, geri yukleme de geri alinabilir.
+
+  YEDEGI ORTAK KLASORDE TUTMAYIN.  Kendi bilgisayarinizda tutun -
+  butun amaci veritabaniyla ayni kaderi paylasmamasi.
+
+============================================================
+v33  -  OTURUM YONETIMI, BOSTA KAPANMA, MRB/TECO KILIDI
+============================================================
+
+MRB / SCRAP / TECO ARTIK KILITLENMIYOR
+  O satirda kilit dugmesi yerine "always open" yaziyor.  Diger veri
+  turleri SAP disa aktarimidir, toptan degistirilir ve yanlislikla
+  uzerine yazilmaya karsi korunmaya degerdir.  MRB/TECO kayitlari ise
+  gun boyu elle girilir; kilitlemek sadece is gorur.
+
+  LOCK ALL / UNLOCK ALL de bu satiri atlar.
+
+USERS VE OPEN SESSIONS ARTIK TEK EKRANDA
+  Hesap menusu (sag ust) > "Users and open sessions..."
+
+  Tek pencerede uc bolum:
+    USERS               rol degistir, sifre sifirla, hesabi ac/kapa
+    OPEN SESSIONS       kimde acik, CLOSE SELECTED / CLOSE ALL OTHERS
+    CLOSE IDLE COPIES   bosta kapanma suresi
+
+  Kimin kopyasini kapatacagina karar vermek icin ikisine ayni anda
+  bakmak gerekiyor; eskiden iki ayri menu ve iki ayri pencereydi.
+
+KAPATMA ISTEGI ARTIK HIZLI GORULUYOR
+  Diyalog "yaklasik on saniye" diyordu ama kopya istegi her 5.
+  yoklamada ariyordu - yani bir dakikaya yakin surede.  Bozuk gibi
+  gorunmesinin sebebi buydu.
+
+  Kalp atisi bir YAZMA oldugu icin seyrek kalmali (her 5. yoklama).
+  Ama "admin beni kapatmak istiyor mu" sorusu bir OKUMA ve maliyeti
+  yok - artik her yoklamada (8 saniyede bir) soruluyor.
+
+BOSTA KALAN KOPYALAR KENDINI KAPATIYOR
+  CLOSE IDLE COPIES > CLOSE AFTER [ ] minutes
+
+  0 = kapali (varsayilan, kimse istemedikce bir sey degismez).
+  Ayar HERKES icin gecerlidir, her makinede.
+
+  Kopya kapanmadan bir dakika once uyari kutusu gosterir; herhangi bir
+  tusa basmak ya da fareyi oynatmak iptal eder.
+
+  NEDEN: gece boyu acik kalan bir kopya ortak dosyayi tutar ve sabah
+  yeni surumun cikmasini engeller.
+
+============================================================
+v33  -  COK KULLANICILI CALISMA: ALTI SORUN DUZELTILDI
+============================================================
+
+1) IMPORT SIRASINDA synchronous = OFF  (BOZULMANIN MUHTEMEL SEBEBI)
+   Her import'ta SQLite'a "diskin yazdigini onaylamasini bekleme"
+   deniyordu.  Yerel diskte en kotu ihtimalle son islem kaybolur.
+   SMB paylasiminda baglantinin kopmasi COKMEYLE AYNI SEYDIR: ucustaki
+   yazmalar hic inmez ve dosya MALFORMED kalir.
+
+   Aldiginiz "database disk image is malformed" hatasinin en olasi
+   sebebi budur.  Artik agdaysa kapatilmiyor.
+
+2) IMPORT VERIDE DELIK BIRAKIYORDU
+   Once siliyor ve COMMIT ediyor, sonra yaziyordu.  Arada herkes
+   yarim veritabani okuyordu; yarida kesilirse silinen veri geri
+   gelmiyordu.  Artik silme ve yazma TEK ISLEMDE - digerleri son ana
+   kadar eski veriyi okur, kesilirse eski veri durur.
+
+3) YAZMALAR KILIDI BEKLEMIYORDU
+   v32'de okumalar beklemeyi ogrendi, yazmalar ogrenmedi.  Biri
+   yuklerken TECO notu kaydetmek hata veriyor ve NOT KAYBOLUYORDU.
+   Artik kisa yazmalar 45 saniyeye kadar bekliyor.
+
+4) KILIT HATASI KOPYAYI KALICI SALT-OKUNUR YAPIYORDU
+   Bir anlik kilit yuzunden oturum boyunca "yazamazsiniz, admin'e
+   sorun" durumuna dusuyordunuz.  Artik sadece gercek bir ret
+   salt-okunur sayiliyor.
+
+5) ACILISTAKI DENEME YAZMASI DA AYNI HATAYI YAPIYORDU
+   O an biri yukluyorsa kopya butun oturum boyunca yazamaz haline
+   geliyordu.  Ayni duzeltme oraya da uygulandi.
+
+6) OTURUM LISTESI HER CAGRIDA YAZIYORDU
+   Admin penceresi listeyi 6 saniyede bir yeniliyor ve her yenileme
+   bir YAZMA yapiyordu.  Artik temizlik en fazla dakikada bir.
+
+KOK SEBEP HALA DURUYOR
+  Bunlar aciyi azaltir ama kaldirmaz: SQLite bir ag paylasiminda ve
+  cok kullanicili.  Kalici cozum tek yazar duzeni ya da gercek bir
+  sunucu.
+
+============================================================
+v34  -  WATERFALL TECO/MRB/SCRAP FILTRESI DUZELTILDI
+============================================================
+
+BELIRTI
+  WATERFALL'da TECO / MRB / SCRAP dugmelerine basmak hicbir sey
+  degistirmiyordu; sayfa yenileniyor, satir sayisi ayni kaliyordu.
+
+SEBEP
+  Dugmelere basilinca calismasi gereken fonksiyon HICBIR YERDEN
+  CAGRILMIYORDU - olu koddu.  Filtre yalnizca sayfa ilk kurulurken bir
+  kez hesaplaniyor, sonra hic guncellenmiyordu.
+
+  Diger uc analiz sayfasi (RW ANALYSIS, CAUSE OP, BOTTLENECK) filtreyi
+  kendi yenilemesinin icinde hesapladigi icin onlar calisiyordu.
+
+DUZELTME
+  WATERFALL da ayni desene gecti: filtre her yenilemede hesaplaniyor.
+
+  400 serilik bir parcada (5 TECO, 3 MRB, 2 SCRAP isaretli):
+    filtresiz            400
+    TECO haric           395
+    TECO+MRB haric       392
+    TECO+MRB+SCRAP       390
+    sadece TECO            5
+    sadece TECO+MRB        8
+
+============================================================
+v35  -  MRB/TECO SAYFASI VE TEMA RENKLERI   (sema 18)
+============================================================
+
+REASON ARTIK TAM OKUNUYOR
+  Kendi satirinda, uc satir yuksekliginde, kelime kaydirmali.
+
+FIXED ARTIK SILMIYOR
+  'fixed' olarak cozmek KAYDI SILIYORDU.  "Bu yil kac MRB parcayi
+  duzelttik" sorusunun cevabi hicbir yerde tutulmuyordu.
+
+  Artik kayit kaliyor ve neydigini hatirliyor.  TOTALS'ta FIXED kutusu
+  var, altinda dokumu yazar (MRB 1  TECO 1).  Listede "FIXED (MRB)"
+  gorunur.  Excel ciktisinda WAS / FIXED ON / FIXED BY sutunlari var.
+
+SERIAL DETAIL
+  Cause op sutunlari kaldirildi (cause op'un kendi sayfasi var).
+  Yerine RW HOUR / RW MACHINE / MACHINE DESCRIPTION.
+  Ustte toplam: "3 rework entry(s), 10.5 sa in total."
+
+PART SECICI CEKMECEDE
+  Diger filtreler gibi bir chip - basinca aciliyor.
+
+SERIAL DETAIL KAPATILABILIYOR
+  HIDE ile katlanir, listenin basindaki dugmeyle geri gelir.
+
+LIGHT MODE: 90 WIDGET TEMAYI TAKIP ETMIYORDU
+  Palet renkleriyle kurulup yeniden boyama listesine kaydedilmemis
+  widget'lar dogdugu temada dogru, digerinde yanlis kaliyordu.
+
+  En cogu filtre chip'leri ve part balonlariydi (24 dugme, hic
+  kaydedilmemis).  Ayrica DATA HEALTH satirlari, MRB not rengi
+  kareleri, B1000 palet listesi ve cizim tuvali, spinner.
+
+  Hepsi duzeltildi.  Temayi gercekten cevirip geride kalani arayan bir
+  denetim testi eklendi - bir daha sessizce bozulursa yakalar.
+
+============================================================
+v36  -  KONUM KURALLARI KANITLANDI, B1000'E PREDICTION
+============================================================
+
+KONUM KURALLARI DEGISMEDI - KANITLANDI
+  Bes kural once tek tek yazildi, sonra VERITABANINDAKI HER SERI
+  uzerinde kodun cevabiyla karsilastirildi:
+
+    R1  Parca en son ZAMAN GIRISI yapilan operasyondadir
+    R2  Standardin ALTINDA giris varsa hala oradadir
+    R3  Standart tamamlandiysa sonraki operasyonu bekliyordur
+    R4  Bulundugu operasyondan onceki her sey tamamlanmistir
+    R5  Standart sure SIFIR ve giris varsa (sifir saat de olsa)
+        sonraki operasyonu bekliyordur
+
+  800 serinin 800'unde tutuyor.
+
+TEZGAHTA TEK PARCA  -  BIR INCELIK
+  "Oraya en son giris yapilan parca oradadir" ancak HALA ORADA OLANLAR
+  arasinda anlamlidir.  Operasyonunu bitirmis parca tezgahi isgal etmez.
+    Ornek: 10016'da T000406 29.4/26.7 ile BITIRMIS,
+           T000405 25.4/26.7 ile hala kesiliyor, damgalar ayni
+           -> tezgahtaki T000405.
+
+  ESITLIK ARTIK BELIRLEYICI: iki parca ayni damga VE ayni yuzdeyi
+  tasiyabiliyor.  Eskiden kazanan satirlarin gelis sirasina kaliyordu,
+  yani plan veride hicbir sey degismeden farkli parca gosterebiliyordu.
+  Son soz artik seri numarasinin.
+
+B1000 LIVE'A PREDICTION EKLENDI
+  VIEW seridinde "Predicted pos." kutusu.  Varsayilan KAPALI.
+
+  KURALLAR (sorulma sirasiyla):
+    1  Damga yok ya da son giris 20 GUNDEN eski -> TAHMIN YAPILMAZ
+    2  Operasyon zaten tamamlanmis -> ilerledi
+    3  Operasyona hic giris yok -> ilerlemez
+    4  Son giristen bu yana 6 SAATTEN fazla -> tezgahtan inmistir
+    5  Girilen + gecen >= standart -> ilerledi
+    6  Aksi halde hala tezgahta
+
+  ORNEK: 80 op standart 20 sa, girilen 14 sa, son giris 17:00.
+         Saat 20:00'de 14 + 3 = 17 saat -> HALA TEZGAHTA.
+         7 saat dokunulmamis olsaydi -> bekleme alaninda.
+
+  TAHMIN PARCAYI TEZGAHA BAGLAMAZ.  Ilerlemis parca sonraki
+  operasyonun BEKLEME ALANINA gider.  O operasyonu alacak bir bolge
+  plana cizilmemisse parca en son gorundugu tezgahta kalir.
+
+  DIKKAT: bekleme bolgesi cizilmemisse prediction'in gorunur etkisi
+  olmaz.  Parcalarin bekledigi tezgah gruplari icin plana bolge
+  eklemek gerekiyor.
+
+WATERFALL PREDICTION
+  Kendi hesabi (gecmis ortalamalar) DEGISTIRILMEDI.  Sadece 20 GUN
+  SINIRI eklendi - uc hafta dokunulmamis bir parcayi ortalamalarla
+  yurutmek onu sirf gecen zamanla rotanin sonuna tasiyordu.
+
+OLU KOD
+  Hicbir yerden cagrilmayan 11 fonksiyon kaldirildi (185 satir) ve
+  kullanilmayan bir import temizlendi.
+
+============================================================
+v37  -  IKI PREDICTION, PARCA GRUBU BEKLEME ALANLARI (sema 19)
+============================================================
+
+WATERFALL'DA IKI PREDICTION MODELI
+  "Predicted pos." kutusunun yaninda iki secenek:
+
+    by lead time            kac ISTASYON ilerlemistir
+      Son dokunulmadan bu yana gecen sureyi her adimin gecmis ortalama
+      lead time'ina harcayarak rotada yurur.  Bir operasyonun neresinde
+      oldugu hakkinda bir sey soylemez.
+
+    by booked + time since  bulundugu operasyonun NERESINDE
+      Girilen saat + son giristen bu yana gecen saat standart sureye
+      ulasti mi?  En fazla BIR ADIM ilerletir.
+      Hucre 14/20 yerine 17/20 gosterir.
+
+  Kurallar (booked + time since):
+    - 20 GUNDEN eski -> tahmin yapilmaz
+    - operasyon zaten bitmis -> ilerledi
+    - hic giris yok -> ilerlemez
+    - 6 SAATTEN fazla bosluk -> tezgahtan inmistir
+    - girilen + gecen >= standart -> ilerledi
+    - aksi halde hala tezgahta
+
+B1000 LIVE'A TAHMIN EKLENMEDI
+  Bekleme alanlari cizilmeden bir parcayi tezgahtan indirmenin anlami
+  yok - gidecek yeri olmadigi icin ya tezgahta kalir ya plandan
+  kaybolur.  Alanlar cizildiginde lead time modeli oraya baglanacak.
+
+BEKLEME ALANLARI PARCA GRUBUNA GORE DARALTILABILIYOR
+  EDIT PLAN > bolgeyi sec > PART GROUP alani.  Virgulle birden fazla.
+
+  BOS BIRAKILIRSA her parcayi alir - onceden cizilmis planlar anlam
+  degistirmedi.
+
+  DAR OLAN ONCE SECILIR: ayni tezgah grubunu iki bolge de istiyorsa
+  parca grubu yazili olan once denenir, yoksa genel bolge her seyi yutar
+  ve ozel bolge hep bos kalir.
+
+  Sadece parca grubu yazili (tezgah grubu ve operasyon bos) bir bolge de
+  olabilir: o gruptan bekleyen her parcayi alir.
+
+  Alanin altindaki aciklama PART DATA'daki gruplari listeler, tanimadigi
+  isme "NOT IN PART DATA" der.
+
+BEKLEME ALANLARI NEYI BEKLEDIGINI YAZIYOR
+  Bir bolgede farkli operasyonlari bekleyen parcalar bir arada durur:
+
+        12
+     280   x5
+     290   x4
+     310   x3
+
+  Yer darsa en kalabaliklari ve "+N more op(s)".
+
+============================================================
+v38  -  GENEL TARAMA VE TEMIZLIK
+============================================================
+
+OLU KOD
+  89 satir daha kaldirildi (hic cagrilmayan bes fonksiyon ve bir sabit).
+  Tarama 15 aday bulmustu, 10'u yanlis pozitifti - command=self.X gibi
+  parantezsiz baglamalar.  Hepsi tek tek dogrulandi.
+
+DUZELTILEN SESSIZ HATA
+  Sema gocundeki tablo yeniden kurma islemi sessizce basarisiz
+  olabiliyordu.  Basarisiz olursa parcalarin konumu eski (hatali)
+  kurala geri doner ve hicbir yerde bir sey yazmaz.
+
+  Artik DATA HEALTH'te kirmizi UPGRADE satiri cikiyor:
+  "operasyon tablosu son guncellemeden sonra yeniden kurulmadi -
+   bitmis bir parca daha onceki bir operasyonda gorunebilir."
+
+  Boyle bir satir gorurseniz SAP export'unu tekrar yukleyin.
+
+KONTROL EDILDI, SORUN YOK
+  SQL enjeksiyonu yok (degerler her zaman ? ile gidiyor).
+  Kullanilmayan import yok.
+  Degisebilir varsayilan arguman tuzagi yok.
+
+TEST ARTIKLARI TEMIZLENDI
+  tests/_work 411 MB -> 59 MB.  Silinenler otomatik yeniden uretiliyor.
+
+============================================================
+v39  -  "KESILIYOR" VE "BEKLIYOR" AYNI SATIRDA YAZIYORDU
+============================================================
+
+BELIRTI
+  Bazi serilerde iki hucre birden isaretleniyordu:
+     op 70  [15/26]  turuncu, kesiliyor
+     op 80  waiting  sari
+  Bir parca hem tezgahta olup hem sonraki operasyonu bekleyemez.
+
+SEBEP  -  v29'DA GETIRILEN GERILEME
+  v29'da boyama kurali "son TAMAMLANAN adimdan sonrasi bekliyor"dan
+  "parcanin BULUNDUGU adimdan sonrasi bekliyor"a cevrilmisti.
+
+  Parca kesilirken bulundugu adim tamamlanmis DEGILDIR.  Eski kuralda
+  sari hucre turuncunun uzerine denk gelip gorunmuyordu; yeni kuralda
+  bir adim ileri kayip turuncunun yaninda belirdi.
+
+DUZELTME
+  Sari "waiting" artik yalnizca hicbir sey kesilmiyorken ciziliyor.
+
+     70 yarim (15/26)      60:gecti  70:KESILIYOR  80:gelinmedi
+     70 tamamlandi         60:gecti  70:gecti      80:BEKLIYOR
+     70 giris var 0 saat   60:gecti  70:BEKLIYOR   80:gelinmedi
+
+  Her satirda tam BIR isaret var.
+
+
+YENI ARAC: NEDEN_BEKLIYOR.py
+  "Waiting" yazan bir operasyonda GIRIS DE VARSA sebebini seri seri
+  soyler.  Uc sebep olabilir, ucu de kasitli:
+
+    A  giris var ama SIFIR saat        hicbir sey kesilmemis
+    B  sadece REWORK girisi            rework parcayi tasimaz
+    C  uretim girisi daha ESKI tarihli girisler sirasiz
+
+  Spyder'da acip F5.  Ortak veritabanini kendisi bulur.
+  Tek bir seriyi merak ediyorsaniz sordugunda seri numarasini yazin.
+  KURTARMA.py gibi uygulamanin parcasi degildir.
+
+============================================================
+v40  -  KONUM TARIHE DEGIL ROTADAKI SIRAYA GORE + MRB FILTRESI
+============================================================
+
+KONUM KURALI DEGISTI
+  ESKI: parcanin yeri EN SON ZAMAN GIRISI yapilmis operasyon
+  YENI: parcanin yeri ROTADA EN ILERI olan, uretim girisi tasiyan
+        operasyon.  TARIH BUNU BELIRLEMEZ.
+
+  NEDEN: bir parca bir operasyona ULASTIYSA onu geri alamaz.
+
+     460   giris 14 Eylul      <- en yeni tarih
+     570   giris daha eski
+     -> parca 570'tedir
+
+  Eski kural boyle bir parcayi 460'a geri cekiyor, 470-570 arasini
+  "henuz gelinmedi" diye boyuyordu.
+
+  WAITING / PROCESSING hesabi da bu operasyon uzerinden yapilir.
+
+  REWORK GIRISLERI YINE SAYILMAZ.  Tek istisna: bir seride hic uretim
+  girisi yoksa en ileri rework girisi kullanilir.
+
+  B1000 LIVE de ayni kurali kullaniyor - test 792 serinin hepsinde iki
+  sayfanin ayni operasyonu soyledigini dogruluyor.
+
+MRB / SCRAP / TECO SAYFASINDA FILTRE CALISMIYORDU
+  O sayfanin kendi TECO/MRB chip'i hicbir yere baglanmamisti; EXCLUDE
+  ve ONLY dugmeleri hicbir sey yapmiyordu.  Artik calisiyor.
+
+  TOTALS kutulari filtreden ETKILENMEZ - her zaman kac kayit oldugunu
+  gosterirler.
+

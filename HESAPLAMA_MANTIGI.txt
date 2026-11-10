@@ -1,0 +1,1029 @@
+================================================================================
+WIP TRACKER  -  ANALIZ SAYFALARI: NE, NASIL HESAPLANIYOR
+================================================================================
+Surum v62
+Bu belge, programdaki her analizin HANGI VERIYI okudugunu, HANGI KURALI
+uyguladigini ve NEYI HESABA KATIP NEYI KATMADIGINI anlatir.  Amaci
+kontrol edilebilmesi: bir sayi beklediginizden farkli ciktiginda hangi
+kurala bakacaginizi bilesiniz.
+
+Okuma sirasi: once BOLUM 0 (butun sayfalarin ortak temeli), sonra
+ilgilendiginiz sayfa.
+
+    BOLUM 0   HERKESIN KULLANDIGI TEMEL KURALLAR
+    BOLUM 1   RW ANALYSIS
+    BOLUM 2   CAUSE OP ANALYSIS
+    BOLUM 3   WATERFALL  (+ LEAD TIME / QUEUE / FLOW modulu)
+    BOLUM 4   PART BOTTLENECK
+    BOLUM 5   MRB / SCRAP / TECO
+    BOLUM 6   B1000 LIVE
+    BOLUM 7   FORECAST
+    BOLUM 8   ORTAK FILTRELER - hepsinde ayni calisir
+    BOLUM 9   BILINEN SINIRLAR  (neyi HESAPLAMIYOR)
+
+
+================================================================================
+BOLUM 0   HERKESIN KULLANDIGI TEMEL KURALLAR
+================================================================================
+
+0.0b  AYNI DOSYAYI BIRDEN FAZLA KISI ACTIGINDA  (v55)
+--------------------------------------------------------------------------------
+Ayarlar her kopyada BELLEKTE tutulur: paylasilan klasorde her okuma bir
+ag gidis-donusudur ve acilista onlarca ayar okunur.  Ama bu onbellek O
+KOPYAYA aittir - baska bir makinenin yazdigini kendiliginden fark etmez.
+
+Bu yuzden ortak bir AYAR SAYACI vardir: her ayar yazmasi onu ilerletir,
+her kopya yoklamasinda (8 saniyede bir) okur, ve ilerlemisse ayarlarini
+dosyadan yeniden alir, kurallari tekrar uygular, acik sayfayi yeniler.
+
+BAKIM MODU hicbir zaman onbellekten okunmaz - "herkes ciksin" demek,
+tam da o anda ulasmasi gereken seydir.  (v55 oncesi ulasmiyordu: zaten
+calisan kopyalar bakim modunu hic gormuyordu.)
+
+MMAP: dosya yalnizca YEREL DISKTE bellege eslenerek okunur.  Ag
+paylasiminda esleme makineler arasinda tutarli degildir ve bir kopya
+digerinin yazdigini gormeyebilir.
+
+0.1  VERI NEREDEN GELIYOR
+--------------------------------------------------------------------------------
+  rw            REWORK kayitlari.  Her satir bir rework girisi: hangi
+                seri, hangi operasyonda REDDEDILDI (reject op), hatanin
+                KAYNAGI hangi operasyon (cause op), kac saat, hangi
+                tezgah, hangi tarih.
+  ops           URETIM adimlari.  Rework olmayan her zaman girisi: seri,
+                operasyon, tezgah, tarih, toplam iscilik, MAKINE SURESI.
+  parts         Parca listesi: parca no, grup, muhendis.
+  comp          Is merkezi (WC) kodu -> tezgah adi + TEZGAH GRUBU.
+                Gruplar birlestiren isimdir: rotadaki wc_group ile
+                COMP'taki sinif AYNI YAZILMALIDIR.
+  shipment      Sevk edilen seriler.  "Satildi/cikti" bilgisinin TEK
+                kaynagi burasidir.
+  wf_traveler   Rota: parca basina, sira ile operasyonlar; her adimin
+                STANDART SURESI ve TEZGAH GRUBU.
+  wf_part_data  Yukaridakilerden TURETILEN ozet: (parca, seri, operasyon)
+                basina tek satir - toplam saatler, ILK giris ve SON giris
+                damgasi.  Import sonrasi ops/rw'den bastan hesaplanir.
+  serial_flags  MRB / SCRAP / TECO / FIXED isaretleri (elle girilir).
+
+0.2  ILERLEME SAATI: MAKINE SURESI, YOKSA ISCILIK  (v62)
+--------------------------------------------------------------------------------
+Bir adimdaki ILERLEME (turuncu "15/26" hucresi, B1000 sayaci, kalan is,
+FORECAST tezgah yuku) SATIR SATIR su saatlerin toplamidir:
+
+    makine suresi (O) > 0          ->  makine suresi
+    makine suresi yok / 0          ->  o satirin ISCILIK suresi (P)
+    SETUP satiri (Unit "H", M)     ->  sayilmaz
+    REWORK satiri (Q > 0)          ->  sayilmaz
+
+TOPLAM IS (T) KULLANILMAZ: bir tezgahta iki operator calisirsa bir
+saatlik kesim icin iki saat iscilik girilir; toplam isle hesaplayan bir
+model parcayi operasyondan iki kat hizli gecirir.  Bazi operasyonlarda
+tezgah degil iscilik girildigi icin makine suresi olmayan satir kendi
+iscilik suresine duser.
+
+P sutunu okunmadan alinmis ESKI veride satir Toplam Is'e duser; veri
+yeniden yuklenince kendiliginden duzelir.
+
+SAAT HICBIR ZAMAN "BITTI" DEMEZ - yalniz ne kadar ilerlendigini
+gosterir.  Bitti karari X'indir (0.3).
+
+0.2b  SEKANS NUMARALI OPERASYONLAR  (v53)
+--------------------------------------------------------------------------------
+Ayni operasyon travelerda birden fazla kez, her biri kendi SEKANS
+numarasiyla yazilabilir:
+
+    280/1   FPI WASH        kendi standart suresi
+    280/3   FPI PENETRANT   kendi standart suresi
+    280/4   FPI READ        kendi standart suresi
+
+NERELERDEN OKUNUR
+    TRAVELER   operasyon hucresinde dogrudan "280/1" yazar.
+    SAP        iki ayri sutun: G operasyon, H sekans.  Program ikisini
+               birlestirir.  Sekans sutunu basligindan bulunur ("Seq",
+               "Sekans", "Sira No"); bulunamazsa H sutunu kullanilir.
+
+ADIM ANAHTARI (step key): sekansi olan bir satirin kimligi "280/1"dir,
+olmayanin kimligi eskisi gibi "280".  Bir zaman girisi, YALNIZCA kendi
+adim anahtarina sayilir - 280/3'e girilen saat 280/1'e yazilmaz.
+
+SEKANS SIFIR = SEKANS YOK (v60).  SAP ayni adimi bazen sekans sutunu
+bos, bazen sifir yazarak gonderir; "130/0" ile "130" AYNI ADIMDIR.
+Ikisi ayri sayilirken o adimin girisleri ikiye boluniyor ve hicbiri
+standardi dolduramiyordu.
+
+BIR GIRIS YALNIZ KENDI ADIMINA AITTIR (v62).  Sekansi rotayla tutmayan
+bir giris baska bir sekansa ODUNC VERILMEZ (v59/v60'in yedek kurali
+kalkti: bir sekansin girisini ya da X'ini digerine tasiyor, tabandaki
+sekansi bos birakip sonrakileri yesil gosteriyordu).
+
+ILERIDEKI BIR OPERASYONA GIRIS, PARCANIN ORAYA VARDIGININ KANITIDIR -
+o operasyon tamamlanmamis olsa bile (X gelmemis olsa bile) parca orada
+gosterilir.
+
+GIRIS YAPILAN OPERASYON ROTADA HIC YOKSA (v60): o giris, O OPERASYONDAN
+ONCEKI SON ROTA ADIMINA varildiginin kanitidir.  Traveler yeniden
+yuklenip o satiri artik tasimiyor olabilir, ya da sayfaya "temizlik
+adimlarini cikar" denmis olabilir.  Eskiden boyle bir giris hicbir
+satirla eslesmiyor, parcanin konumu HIC OLMUYOR ve matris onu rotanin
+EN BASINA ciziyordu - diger sayfalar "610" derken.  Kurali daraltan iki
+sey: rota disi bir REWORK parcayi tasimaz, ve boyle adimlar "bitmis"
+sayilmaz - girisleri yoktur, program onlara giris uydurmaz.
+
+SEKANSLAR SIRALIDIR (v62): traveler her zaman artan siradadir ve
+sekanslar da siradaki adimlardir - 280 (=280/0) -> 280/2 -> 280/7.  Her
+biri 0.3 / 0.4'teki kuralin aynisiyla okunur; "operasyon butun
+sekanslari bitince biter" diye ayri bir kural YOKTUR.  280/2'ye giris
+varsa 280, X'i girilmemis olsa da gecilmistir.
+
+AYNI SEKANS iki kez yazilirsa (280/1 iki satir) bunlar tekrardir,
+eskisi gibi tek satirda birlesir ve standart sureleri toplanir.
+
+DUZ SATIR = SIFIR SEKANSI, HER ZAMAN AYRI BIR ADIM (v63).  Traveler'da
+ayni operasyon hem duz hem sekansli yazilabilir:
+
+    130        FPI                          12.0 sa   <- 130/0, bir ADIM
+    130/1      FPI WASH                      4.0 sa
+    130/4      FPI READ                      8.0 sa
+
+Duz "130" satiri 130/0'dir: kendi isi, kendi suresi olan bir adimdir,
+sekanslarin toplami DEGILDIR - saati onlarin toplamina esit olsa bile.
+Hicbir satir rotadan cikarilmaz, sureler satirlar arasinda bolunmez ya
+da tasinmaz.  (v57-v62 arasinda duz satirin suresi sekanslarin
+toplamina esitse "baslik" sayilip rotadan siliniyordu; tek sekansta -
+5 ve 5/4 ayni saatte - gercek bir adimi siliyordu.  Kaldirildi.)
+
+"TEKRAR EDEN OPERASYONLARI TEK SATIRA INDIR" secenegi ADIM anahtarina
+gore calisir: ayni sekansin tekrari birlesir, FARKLI SEKANSLAR ASLA
+BIRLESMEZ.  130 ile 130/0 ayni adimdir.
+
+Suresi bos olan adimlar yukleme kaydinda listelenir.  Sifir sure
+birakmak zararsiz degildir: standart suresi olmayan bir adimda ilerleme
+yuzdesi, kalan is ve FORECAST yuku hesaplanamaz (bitti karari yine
+X'tir, bkz. 0.3).
+
+Rotanin her satiri kendi suresinin yaninda OPERASYONUN TOPLAM SURESINI
+de tasir (op_std_hour) = o operasyonun butun satirlari, duz satir
+dahil: "130 = 12, 130/1 = 4, 130/4 = 8 -> operasyon 130 = 24 sa".
+
+0.3  BIR ADIM NE ZAMAN BITMIS SAYILIR  (v62 - atolyenin kurali)
+--------------------------------------------------------------------------------
+SAP, bir adima yapilan SON zaman girisinde AH (Son) sutununa X koyar.
+Bir adimi YALNIZ su X bitirir:
+
+    SETUP OLMAYAN (M <> "H") ve REWORK OLMAYAN (Q = 0) bir uretim
+    satirindaki X  ->  BITTI; parca SONRAKI adimda BEKLIYOR.
+    Yalniz SETUP satirinda X        ->  BITMEDI, parca orada ISLENIYOR
+    X yok (giris var)               ->  BITMEDI, parca orada ISLENIYOR
+                                        (saat ne derse desin; 0 saatli
+                                        giris de dahil)
+
+SAAT KARAR VERMEZ.  Standart sure yalniz ilerlemeyi gostermek icindir;
+standart suresi 0 olan adim da X ile biter.  (v61'e kadar X olmayan
+veride "makine suresi >= standart -> bitti" kurali vardi; KALKTI.)
+
+TAMAMLANMA TARIHI: X ile bitmisse o X'in tarihi (en son X'li uretim
+girisi); X'siz gecilmisse (0.4 kural 3) o adima yapilan SON uretim
+girisinin tarihi.  Hic girisi olmayan gecilmis adimin tarihi yoktur.
+
+BUGUNUN TARIHI VE SAATI BU HESABA GIRMEZ.  Gecen sure yalnizca
+PREDICTED POS icin kullanilir.
+
+0.4  PARCA NEREDE  -  KONUM KURALI
+--------------------------------------------------------------------------------
+    1)  Parca, ROTADA EN ILERI olan ve URETIM girisi yapilmis ADIMDADIR
+        (en buyuk operasyon/sekans).  TARIH BUNU BELIRLEMEZ; ayni gun
+        birden fazla adim ilerleyebilir.
+    2)  O adim 0.3'e gore X ile bitmisse parca SONRAKI adimda BEKLIYOR.
+    3)  Bitmemisse parca ORADA ISLENIYOR.
+    4)  Ondan ONCEKI her adim bitmistir - X'i olsun olmasin.  Parca
+        ileride oldugu icin geride kalmistir.  (X'i girilmemis bu
+        adimlar veri yuklenirken DATA sayfasinda sayilir - bkz. 0.4b.)
+
+0.4b  YUKLEME UYARISI  (v62)
+    Veri yuklenince DATA sayfasinda, eksik tezgah uyarisinin altinda:
+    "X CHECK: N serial(s) moved past a step without its X" - en ileri
+    adima gecmis ama GERIDEKI bir adima X girilmemis seri sayisi ve en
+    cok gorulen adimlar.  Ayrica son SAP dosyasinda Son / Unit / Seq /
+    Toplam Is sutunlarindan biri yoksa o da yazilir.
+
+REWORK GIRISI PARCAYI TASIMAZ.  Rework saati, hatayi tasiyan operasyona
+yazilir ve bu cogu zaman parca oradan gectikten sonra yapilir.  Konum
+her zaman en son URETIM girisine gore belirlenir.
+
+BIR SATIRDA TEK ISARET: bir parca ayni anda hem "kesiliyor" hem "bir
+sonrakini bekliyor" olamaz.  Kesiliyorsa sonraki adim bos gorunur.
+
+0.5  WIP NEDIR
+--------------------------------------------------------------------------------
+WIP = HENUZ SEVK EDILMEMIS seri.  Butun operasyonlari bitmis olmasi tek
+basina parcayi WIP'ten cikarmaz - mamul ambarinda bekliyor olabilir.
+Cikaran tek sey sevkiyat raporudur (shipment).
+Seri eslestirme: rapordaki serinin basindaki TMT ve RTD atilir
+(TMT2G7RR, RTD2G7RR, TMTRTD2G7RR -> 2G7RR).  Uretim verisinde RTD2G7RR
+diye yazilmis seri de 2G7RR satildiysa satilmis sayilir (2.1.0).
+
+0.6  ATOLYE TAKVIMI  (v56'da vardiya saatlerine gecti)
+--------------------------------------------------------------------------------
+Takvim artik VARDIYA SAATLERIDIR.  FORECAST sayfasindaki SHIFT
+TIMETABLE ekraninda uc vardiya saatleriyle tanimlanir:
+
+    VARDIYA 1   07:00 - 15:00
+    VARDIYA 2   15:00 - 23:00
+    VARDIYA 3   23:00 - 07:00
+
+ve haftanin her gunu icin hangilerinin dondugu isaretlenir.
+
+    HICBIR VARDIYASI OLMAYAN GUN = CALISILMAYAN GUN.
+    Ayri bir "calisilan gunler" listesi YOKTUR - iki yerde yazan sey er
+    ya da gec birbirini tutmaz.
+
+    GECE VARDIYASI (23:00-07:00) gece yarisini asar ve BASLADIGI gune
+    aittir.  Pazartesi 23:00'te baslayan vardiya Salı 07:00'de biter ve
+    Pazartesinin vardiyasidir.
+
+    v56 oncesi takvim "N saat x M vardiya" idi: hangi saatler oldugunu
+    ve bir gunun digerinden farkli olabilecegini soyleyemiyordu.
+
+BEKLEME SURELERI bu takvime gore olculur (2.1.2: LEAD TIME HARIC - o
+duz tarih-saat farkidir, BOLUM 3.2 / 3.5) - saat farki degil, ATOLYENIN
+ACIK OLDUGU SAAT.  Cuma 18:00'de tezgahtan inip Pazartesi 08:00'de
+sonraki operasyona giren bir parca, Pzt-Cum uc vardiya donen bir
+atolyede 14 saat beklemistir (Cuma 18:00-23:00 = 5 sa, Cuma gece
+vardiyasi 23:00-Cmt 07:00 = 8 sa, Pzt 07:00-08:00 = 1 sa).
+
+    v56 oncesi gun "gece yarisindan baslayip N saat" sayiliyordu; bu
+    yuzden 06:00'da biten bir parcaya, atolye 07:00'de aciliyorken alti
+    saatlik kuyruk yaziliyordu.
+
+KAPASITE de gun gundur: uc vardiya donen bir Sali, tek vardiya donen
+bir Cumartesinin uc katidir (bkz. BOLUM 7).
+
+ESKI VERITABANI: takvimi olmayan bir dosya acildiginda eski kuralindan
+denk bir takvim kurulur (M vardiya x N saat, 07:00'den baslayarak,
+isaretli gunlerde) - kapasite aynen korunur.
+
+
+================================================================================
+BOLUM 1   RW ANALYSIS
+================================================================================
+Soru: "Rework nerede, ne kadar, kimde?"
+Veri: rw tablosu (sadece hatali seriler).
+
+1.1  PER RAW DATA  (bir kutu = bir seri numarasi)
+--------------------------------------------------------------------------------
+Filtrelerden gecen rework satirlari seri numarasina gore kutulanir.  Her
+kutunun altinda TOPLAM satiri: kac giris ve kac saat.
+
+Her satirda: parca, seri, RED OPERASYONU ve aciklamasi, KAYNAK
+OPERASYON ve aciklamasi, rework saati, REWORK'UN YAPILDIGI TEZGAH,
+REWORK'U YAPAN CALISAN (v54), tarih, FW hafta.
+Son dort sutun (kaynak operasyonun tezgahi, makinesi ve O OPERASYONU
+YAPAN CALISAN) ops tablosundan cikarilir ve SADECE bu tablo acikken
+hesaplanir - pahali oldugu icin.
+
+IKI AYRI CALISAN, IKI AYRI SORU (v54):
+    RW EMPLOYEE NO / NAME         rework'u kim yapti
+    CAUSE OP EMPLOYEE NO / NAME   hataya sebep olan operasyonu kim yapti
+Ikisi de rework dosyasindaki calisan sutunlarindan gelir (Yaka No /
+Name of employee); dosyada bu sutunlar yoksa bos gorunur.
+
+GRUPLAMA (v43): bir sutun basligina SAG TIKLAYIP o sutuna gore
+gruplanabilir - REJECT OP, PART NO, WORK CENTRE, FW WEEK, calisan...
+Her kutunun altinda yine TOPLAM satiri olur ve kutular en cok saatten
+aza dogru siralanir.  Gruplama ANALIZI YENIDEN CALISTIRMAZ; ayni
+kayitlar farkli kutulara dagitilir, o yuzden aniddir.
+
+SUTUNA GORE FILTRELEME (v54): ayni sag tik menusunde FILTER secenegi,
+o sutunun EKRANDAKI degerlerini (yaninda kac satir tasidiklariyla)
+listeler; sectiklerin disindaki satirlar tablodan kalkar.  Birden
+fazla sutunda ayni anda filtre olabilir.
+    KAPSAMI: yalniz bu tablodur.  Ustteki metrik kutulari (PART COUNT,
+    TOTAL RW HR, FTY) butun filtre kumesini anlatmaya devam eder -
+    karismasin diye tablonun altinda hangi sutunlarda filtre oldugu
+    yazar.
+    v54 oncesi sag tik menusu butun sutunlarin gruplamalarini birden
+    listeliyordu; artik menu yalniz tiklanan sutun hakkindadir.
+
+RENKLER: MRB/SCRAP/TECO isaretli bir serinin satiri o isaretin rengini
+alir.  Ozel notunuz varsa (sadece size gorunur) sectiginiz renk.
+
+1.2  METRIKLER
+--------------------------------------------------------------------------------
+  PART COUNT    filtreden gecen FARKLI parca sayisi
+  TOTAL RW HR   rework saatlerinin toplami
+  FTY           First Time Yield:
+
+                FTY = (hic rework gormemis seri) / (uretime girmis
+                       butun seriler) x 100
+
+                PAYDA ops TABLOSUNDAN gelir - cunku rw tablosu sadece
+                HATALI serileri tasir; ondan yield hesaplanamaz.
+                Paydaya rework gormus seriler de eklenir (bir sekilde
+                uretime girmisler).  Ayni zaman ve kapsam filtreleri
+                uygulanir.
+
+1.3  CROSS CHART
+--------------------------------------------------------------------------------
+Satir = RED operasyonu, sutun = KAYNAK operasyonu.  Hucre = o ikili icin
+PARCA SAYISI ve REWORK SAATI.  "Hangi operasyonda reddedilenlerin
+sebebi hangi operasyon" sorusunun capraz tablosu.
+
+1.4  PER SERIAL
+--------------------------------------------------------------------------------
+Tek bir seri numarasinin butun gecmisi: uretim adimlari ve rework
+girisleri tarih sirasiyla bir arada.
+
+1.5  ALL PARTS REPORT
+--------------------------------------------------------------------------------
+Secilen ZAMAN ARALIGINDAKI BUTUN parcalar - ustteki muhendis/grup/parca
+filtresi UYGULANMAZ.  Kasithdir: sectiginiz dilimin icinde bulundugu
+butun tabloyu gormek icindir.
+
+
+================================================================================
+BOLUM 2   CAUSE OP ANALYSIS
+================================================================================
+Soru: "Hatanin KAYNAGI hangi operasyon?"
+
+2.1  OVERALL CAUSE OP SHARE
+--------------------------------------------------------------------------------
+Her kaynak operasyonun toplam rework saatindeki payi.  Yuzde =
+o operasyonun saati / filtredeki toplam saat.
+
+2.2  PER PART / PER REJECT OP
+--------------------------------------------------------------------------------
+Ayni dagilim, parca ve red operasyonu kirilimiyla.
+
+2.3  CAUSE OP TREND
+--------------------------------------------------------------------------------
+Her kaynak operasyonun payinin HAFTA HAFTA nasil degistigi.
+Hesap: (yil, hafta, parca, kaynak op) basina rework saati toplami; her
+hafta icin pay = o operasyonun saati / o haftanin toplami.
+
+NOT: trend kendi haftalarini yurutur, bu yuzden ustteki ZAMAN filtresi
+bu modulde gecersizdir; muhendis/grup/parca filtresi gecerlidir.
+
+2.4  BY REWORK WORKCENTER
+--------------------------------------------------------------------------------
+Rework saatinin REWORK'UN YAPILDIGI tezgaha gore dagilimi.  Dikkat: bu
+hatanin kaynagi degil, duzeltmenin yapildigi yerdir.
+
+
+================================================================================
+BOLUM 3   WATERFALL
+================================================================================
+Soru: "Her seri rotanin neresinde?"
+Veri: wf_traveler (rota) + wf_part_data (giris ozeti).
+
+3.1  MATRIS
+--------------------------------------------------------------------------------
+Satir = seri numarasi, sutun = rotadaki operasyon.  Hucre rengi:
+
+  YESIL     tamamlanmis operasyon
+  TURUNCU   parcanin UZERINDE oldugu operasyon; hucrede "15/26" gibi
+            girilen/standart ve dolan cubuk
+  SARI      bekliyor
+  BOS       henuz gelinmedi
+
+CURRENT OP sutunu (2.1.2, eski adi LAST OP): matrisin parcayi
+gosterdigi operasyon - isleniyorsa islendigi, bekliyorsa bekledigi
+(bulundugu adim X'siz ise o adim, X ile kapandiysa bir sonraki).
+PREDICTED POS aciksa tahmini adim, rotayi bitirende son operasyon.
+
+Kurallar BOLUM 0.3 ve 0.4'tur.  Rotada hic giris yapilmayan adimlar
+varsa bile parcanin yeri en ileri URETIM girisidir; aradaki adimlar
+"gecilmis" sayilir.
+
+3.2  REMAINING  (v44'te degisti)
+--------------------------------------------------------------------------------
+ESKIDEN: rotanin "onceki operasyon" baglantilarindan adim adim
+toplaniyordu.  Bu, HER araligin IKI ucunun da AYNI seride girilmis
+olmasini gerektirir.  Gercek rotalar bunu yapmaz, o yuzden REMAINING
+neredeyse her parcada "Insufficient data" diyordu.
+
+SIMDI (2.1.2):
+    BIR SERININ TOPLAM LEAD TIME'I =
+        SON operasyonun X ile kapandigi tarih-saat
+        eksi
+        ILK operasyonun tamamlanmasi (X'i; X'siz gecildiyse son girisi)
+
+DUZ TARIH-SAAT FARKI - vardiya takvimi (0.6) lead time'a girmez.
+Son operasyonu X ile kapanmamis seri toplama girmez.  Negatif ve
+butun serilerin medyaninin 3 KATINDAN buyuk degerler disarida kalir
+(kenarda unutulmus bir parca adimin suresini anlatmaz).
+
+Butun tamamlanmis serilerin ortalamasi = TOPLAM LEAD TIME.
+Ayrica her adim icin "parcalar bu adimi X ile kapatana kadar ortalama
+ne kadar gecti" egrisi ogrenilir.
+
+    KALAN = toplam lead time  -  parcanin ARKASINDA kalan son adimin
+            kapanma suresi
+    (bulundugu adim X ile kapanmissa o adim, degilse bir onceki)
+
+Hic ulasilmamis bir adim, ulasilmis EN YAKIN ONCEKI adimi kullanir -
+veri boslugu dogrulugu azaltir, cevabi tamamen goturmez.
+
+3.3  PREDICTED POS  -  YALNIZ LEAD TIME  (v62)
+--------------------------------------------------------------------------------
+Tahmin KAPALIYKEN sayfa sadece VERIDE OLANI gosterir.  Acildiginda:
+
+      Parca 0.4'e gore BULUNDUGU ADIMDAN (X ile bulunan konum) baslar ve
+      "son dokunulustan bu yana gecen sure, bu adimdan bir sonrakine
+      gecmenin tarihsel suresini karsiliyor mu?" sorusuyla ADIM ADIM
+      (traveler satiri satiri, sekanslar dahil) ileri yurutulur.
+      Adim sureleri LEAD TIME tablosundan gelir.
+      20 GUNDEN fazla dokunulmamissa HIC TAHMIN YAPILMAZ.
+      MRB / SCRAP isaretli seriler tahmine girmez.
+      Tahmin hicbir parcayi tezgaha KOYMAZ; ileri tasinan parca
+      "bekliyor" olur.
+
+"Girilen saat + gecen sure" yontemi v62'de KALDIRILDI (saat bitti karari
+vermedigi icin anlami kalmadi).  v61'de lead time tablosu sekans
+gecislerini atliyordu ve tahmin sonraki adimlari yanlis indeksle
+okuyordu - duzeltildi.
+
+3.4  EN ILERI N PARCA  (v44)
+--------------------------------------------------------------------------------
+"Furthest along, top N parts": rotada en ileri gitmis N parcayi birakir.
+Bir operasyonda DURAN parcalar once gelir; rotayi bitirmis olanlar
+altta kalir - soru "hangileri cikmak uzere", biten parca zaten bir
+operasyonda degildir.
+
+3.5  LEAD TIME ANALYSIS SAYFASI  (2.1.2; 2.2.0'da kendi sayfasina tasindi)
+--------------------------------------------------------------------------------
+Her ardisik operasyon cifti icin:
+
+    LEAD      onceki operasyonun TAMAMLANMASINDAN bu operasyonun X'ine
+              kadar gecen DUZ SAAT (vardiya takvimi kullanilmaz).
+              Tamamlanma = X'i; X'siz gecildiyse ona yapilan SON giris.
+              Onceki adima hic giris yoksa rotada geriye dogru ilk
+              girisli adim kullanilir.
+              Bu operasyon X ile kapanmamissa o seri bu adima girmez.
+    CUTTING   bu operasyona girilen MAKINE SURESI; makine suresi
+              olmayan operasyonda (yalniz iscilik) ISCILIK suresi
+    QUEUEING  lead - cutting  (yani beklenen kisim)
+    FLOW EFF. cutting / lead   -> adimin ne kadari gercekten kesimdi
+
+TARIH FILTRESI (2.1.3) - modulde secilir:
+    BY OP DATE  yalniz araliktaki operasyon kayitlari; bir adim, iki
+                operasyonunun kaydi da araliktaysa sayilir.
+    BY SERIAL   aralikta kaydi olan seriler secilir, bu serilerin TUM
+                kayitlari tarihine bakilmadan kullanilir - hicbir adim
+                aralik disinda girildi diye atlanmaz.
+    SOLD IN RANGE (2.2.0)  SATIS tarihi (sevk raporu, Ac.GI) araliga
+                dusen seriler secilir, bu serilerin TUM kayitlari
+                tarihine bakilmadan kullanilir.  Zaman "All time" ise
+                satilmis tum seriler.
+Waterfall'daki AVG LEAD tarih filtresine bakmaz, her zaman tum zamandir.
+
+OPERASYON GRUPLARI (2.2.0): kullanici rotanin bir araligina ad verir
+(TURN = 130 -> 150), ayni adi birden fazla parcaya verebilir.
+    Bir serinin suresi = TO operasyonunun X'i - FROM operasyonunun
+                         tamamlanmasi (X'i; X'siz gecildiyse son girisi).
+                         Iki operasyonda da kaydi olmayan seri girmez.
+    CUTTING            = FROM'dan SONRAKI operasyonlardan TO'ya kadar
+                         (TO dahil) olanlarin isi: makine suresi, yoksa
+                         iscilik.
+    QUEUE              = sure - cutting  (cutting sureden buyukse hepsi
+                         cutting sayilir, * isareti)
+    Negatif ve medyanin 3 katindan buyuk degerler parca + aralik
+    bazinda atilir (en az 3 deger varsa).
+    GRUP ORTALAMASI    = gruptaki tum parcalarin kalan TUM serilerinin
+                         ortalamasi (havuz; cok serili parca daha agir
+                         basar).  Her parcanin kendi ortalamasi altinda.
+    Aralik rotanin tamami uzerinden okunur (clean op / tekrar eden op
+    ayiklamasi gruplara uygulanmaz).
+
+OPERASYON NUMARASI YAZIMI (2.2.0): RW / Cause tablolarinda operasyon
+traveler'daki yazimla gosterilir - bastaki sifirlar ve ".00" atilir
+(0600 = 600 = 600.00).  Sayi olmayan operasyon adi oldugu gibi kalir.
+Tablo (2.1.3): her satir bir operasyon (OP + DESCRIPTION); degerler ust
+satirdaki operasyondan o operasyona kadar olan adimdir.
+
+TRAVELER ONCUL SUTUNU (2.1.3): okunmaz.  Matristeki lead satiri dahil
+her aralik bir onceki operasyondan olculur.
+
+Negatif cikan ve o adimin medyaninin 3 KATINDAN buyuk olan degerler
+ortalamaya girmez (en az 3 deger varsa).  Matristeki lead satiri
+(hucreler) ve PREDICTED POS'un adim sureleri ayni kurala uyar.
+
+Girilen makine suresi adimin kendisinden UZUNSA iki operasyonun
+girisleri ortusuyor demektir ve ayrim yapilamaz: adim tamamen "kesim"
+sayilir, ustune OVERLAP isareti konur ve kac adimda oldugu raporlanir.
+
+Bu ayrim onemlidir: uzun bir adim otomatik olarak "yavas tezgah"
+demek degildir, genelde KUYRUKTUR - ve kuyruk para harcamadan
+kaldirilabilir.
+
+
+================================================================================
+BOLUM 4   PART BOTTLENECK
+================================================================================
+Soru: "Is nerede birikiyor?"  Tek parca uzerinde, gun gun.
+
+4.1  PARTS AT EACH OPERATION, DAY BY DAY
+--------------------------------------------------------------------------------
+Satir = operasyon, sutun = gun.  Iki sayi:
+
+  WAITING (bekleyen)
+      O gun itibariyle o operasyonda BEKLEYEN seri sayisi.
+      Parcanin yeri BOLUM 0.4'teki kuralla bulunur - waterfall ile AYNI:
+        - bulundugu operasyon BITMEMISSE parca ORADA sayilir
+          (tezgahta kesiliyor olmasi farketmez: is o operasyondadir)
+        - bitmisse BIR SONRAKI operasyonda sayilir
+      Her seri TEK BIR operasyonda sayilir.
+
+      (v44 oncesi her zaman "en ileri + 1"de sayiliyordu; yani 26
+      saatlik bir kesimin yarisindaki parca, HENUZ ISI VERILMEMIS bir
+      sonraki tezgahin kuyrugunda gorunuyordu.)
+
+  FINISHED (biten)  -  v62, atolyenin EXCEL FORMULU
+      O gun o adimi BITIREN seri sayisi:
+        X ile bitti   -> X'in girildigi gun sayilir (setup ve rework
+                         satirlarinin X'i sayilmaz; bir seri bir adimda
+                         bir kez, EN SON X gununde sayilir)
+        X'siz gecildi -> "Count finished without X" dugmesi ACIKSA o
+                         adimin son uretim girisi gununde sayilir.
+      Dugme KAPALIYKEN sayilar Excel formuluyle HUCRESI HUCRESINE
+      aynidir (tests/test_excel_formula.py her surumde bunu kontrol
+      eder).  Tablonun altinda X'siz kac tamamlanma oldugu yazar.
+
+      BEKLEYEN sayisi bitenlerden AYRI yurunur: bekleyen(bugun) =
+      bekleyen(dun) + bugun siraya giren - bugun cikan.  Cikis, parcanin
+      bir sonraki adima vardigi gundur; bitis ise X gunudur - ikisi
+      farkli gunler olabilir.
+
+      Gun basliklari kisa ve DIKEY yazilir ("08.06 Mon").
+
+  WAITING (bekleyen)  -  v62
+      O gunun SONUNDA serinin durdugu yer, waterfall'un kuraliyla
+      (0.4): o gune kadar ilk uretim girisi yapilmis en ileri adim
+      (rota disi bir giris, ondan onceki rota adimi sayilir); o adimin
+      X'i o gune kadar girildiyse SONRAKI adimda, girilmediyse O adimda
+      sayilir.  Tezgahta islenen ve siradaki ayni hucrededir.  Son adimi
+      X ile kapanan seri hicbir hucrede sayilmaz.  Rework girisi seriyi
+      tasimaz.  tests/test_bottleneck_waiting.py her surumde bunu gun gun
+      waterfall'un kendi fonksiyonuyla karsilastirir.
+
+  OZET SUTUNLARI  (v62, esit genislik)
+      PASSED       aralikta o adimi BITIREN farkli seri sayisi - bir seri
+                   bir adimi bir kez bitirir, yani FINISHED toplamidir
+                   ve "Count finished without X" dugmesine uyar.
+      WAITING NOW  araligin son gununun WAITING sayisi.
+
+RENK: bekleyen sayisina gore isi haritasi.  Digerlerinden cok uzaga
+firlayan gunler (gercek bir tikanma ya da tek kotu bir gun) sabit MOR
+ile gosterilir ve olcegin disinda tutulur - yoksa butun normal gunler
+ayni duz yesile donerdi.
+
+HAFTA AYRIMI: gunler arasindaki ince bosluk haftayi ayirir.
+
+4.2  LONGEST WAIT, PER SERIAL
+--------------------------------------------------------------------------------
+Her seri icin, ARDISIK iki rota adimi arasindaki EN UZUN bosluk bulunur;
+sonra her operasyon "kac serinin en kotu beklemesi burada gerceklesti"
+diye sayilir.  Sonuc bu sayiya gore siralanir.
+
+Sadece TEMIZ ve ARDISIK adimlar sayilir (arada atlanan adim varsa o
+bosluk sayilmaz) - yoksa rotadaki delikler sahte bekleme uretir.
+
+Bu, gun gun tablodan farkli bir soruyu cevaplar: gun gun tablo "kac
+parca duruyor" der, bu "en cok zaman nerede kayboluyor" der.
+
+4.3  OPERASYON SECIMI  (v43)
+--------------------------------------------------------------------------------
+Bir operasyon satirina tiklayinca o operasyon HER IKI TABLODA da mavi
+yanar; tekrar tiklayinca soner.  Gun gun tablo haftalarca yana kaydigi
+icin bir operasyonu takip etmek icindir.
+
+
+================================================================================
+BOLUM 5   MRB / SCRAP / TECO
+================================================================================
+Bu sayfa HESAPLAMAZ, KAYIT TUTAR.  Tek elle girilen veri budur; hicbir
+SAP export'u bunu yeniden uretemez.
+
+  TYPE        MRB / SCRAP / TECO
+  REASON      cok satirli aciklama
+  PROBABILITY MRB ve SCRAP icin olasilik
+  RESOLUTION  bir vaka sonuclandiginda:
+                'mrb' / 'scrap'  ayni kaydi o module TASIR (sebep,
+                                 tarih, olasiliklar korunur)
+                'fixed'          kaydi SILMEZ; FIXED olarak isaretler ve
+                                 ONCEDEN NE OLDUGUNU saklar
+                                 (eskiden siliyordu - "bu yil kac MRB
+                                 parcasini duzelttik" sorusunun cevabi
+                                 da onunla birlikte siliniyordu)
+
+LAST OP sutunu: o serinin en son nerede basildigi - rotadan bagimsiz,
+basit "su an nerede" bilgisi (waterfall'in rota bilen tahmininden
+farklidir).
+
+TOTALS: her turden kac tane oldugu ve FIXED'lerin ONCEDEN ne oldugu.
+Bu sayilar FILTREDEN ETKILENMEZ - toplam demek, var olan demektir.
+
+Bu isaretler butun analiz sayfalarinda filtre olarak kullanilir
+(EXCLUDE / ONLY) ve satirlari renklendirir.
+
+
+================================================================================
+BOLUM 6   B1000 LIVE
+================================================================================
+Soru: "Su anda saha neye benziyor?"
+
+6.1  HER SERI NEREDE
+--------------------------------------------------------------------------------
+Her serinin konumu BOLUM 0.4'e gore bulunur (waterfall ile ayni kural):
+
+    X YOK     parca O TEZGAHTADIR.  Sembolde dolan bir sayac (0.2'deki
+              ilerleme / standart) ve tahmini inis saati gosterilir.
+    X VAR     parca SONRAKI operasyonu bekliyordur ve o operasyonun
+              tezgah grubunun BEKLEME ALANINA konur.
+
+Bir tezgahta ayni anda tek parca islenir (en son giris yapilan);
+CLEAN, ULTRAPOLISH gibi cok parcali gruplar haric.
+
+6.2  BEKLEME ALANLARI
+--------------------------------------------------------------------------------
+Bir bolge, hangi TEZGAH GRUPLARINI (ve istege bagli olarak hangi PARCA
+GRUPLARINI) bekledigini soyler.  Bir parca, bekledigi operasyonun
+grubunu isaret eden bolgeye gider.
+
+DAR BOLGE ONCE ALIR: "HNK bekleme alani, sadece DISK'ler" gibi bir
+bolge, genel HNK bolgesinden once secilir - yoksa genel bolge her seyi
+yutardi ve ozel bolge hep bos kalirdi.
+
+Bolge tanimlanmamissa parca en son gorundugu TEZGAHTA kalir.
+
+6.3  BIR TEZGAHTA BIR PARCA
+--------------------------------------------------------------------------------
+Bir tezgah ayni anda tek parca keser.  Ayni tezgaha birden fazla aday
+varsa en son girisi olan secilir.  Istisna: SHOP RULES'taki
+MULTI-PART MACHINES listesindeki gruplar (ULTRAPOLISH, CLEAN, ...)
+gercekten ayni anda birden fazla parca isler.
+
+
+================================================================================
+BOLUM 7   FORECAST
+================================================================================
+Soru: "Onumuzdeki donemde hangi tezgah grubu ne kadar dolacak?"
+Tek ILERI BAKAN sayfa budur.
+
+7.1  KAPASITE
+--------------------------------------------------------------------------------
+    KAPASITE (saat/gun) = BIRIM  x  O GUNUN VARDIYA SAATI
+
+O GUNUN VARDIYA SAATI takvimden gelir (bkz. 0.6): uc vardiya donen bir
+Sali 24 saat, tek vardiya donen bir Cumartesi 8 saat, vardiyasi olmayan
+bir Pazar 0 saattir.  Tablodaki "CAPACITY h/day avg" sutunu ortalama bir
+calisma gununu gosterir; GUN SUTUNLARININ HER BIRI kendi gununun
+saatini kullanir.  Haftalik sutun, takvimin HAFTALIK TOPLAMINDAN cikar.
+
+BIRIM nedir: bir tezgah bir birimdir (ayni anda bir parca).  Ciktisi
+tezgah degil ADAM olan istasyonlarda (MASK / DEMASK gibi) birim
+UZERINE KOYULAN KISI SAYISIDIR - iki kisi, bir vardiyada iki vardiyalik
+is demektir.
+
+BIR TEZGAH HANGI GRUBA GIRER (v52):
+    1. tezgahin uzerine YAZILAN grup  (B1000'de MACHINE GROUP alani,
+       artik tezgahlar icin de acik)
+    2. COMP'un o WC koduna verdigi grup
+    3. ikisi de yoksa: WC KODUNUN KENDISI grup adi olur
+  Kodu da grubu da olmayan tezgah kapasiteye GIREMEZ - hicbir rota
+  adimina baglanamaz - ama artik adiyla bildirilir (B1000'in ustundeki
+  CAPACITY satiri).  v52 oncesi bu tezgahlar SESSIZCE dusuyordu ve
+  "yeni tezgah ekledim, analiz degismedi" bundan oluyordu.
+
+BIRIM SAYISI NEREDEN GELIR (v46'da secilebilir):
+    B1000 LIVE      plandaki tezgahlar sayilir.  WC KODU GIRILMEMIS
+                    semboller SAYILMAZ (LIVE'da da veri gostermezler).
+                    Tezgahtaki PEOPLE alani doluysa o sayi kullanilir.
+    ELLE GIRILEN    her grup icin TEZGAH ve ADAM kutulari.  Plandan
+                    doldurulur, degistirdiginiz an tablo yeniden
+                    hesaplanir.  ADAM 0 ise TEZGAH sayisi gecerlidir.
+
+    HAFTALIK KAPASITE = gunluk x isaretli calisma gunu sayisi
+
+Calisilmayan gunlerde kapasite SIFIRDIR (gri gosterilir).
+
+7.2  YUK  -  IS NEREDEN GELIYOR
+--------------------------------------------------------------------------------
+Sahadaki (WIP) her serinin BITMEMIS her rota adimi, o adimin STANDART
+SURESI kadar is demektir.  Su an uzerinde oldugu adimda sadece KALAN
+kismi sayilir (standart - girilen).
+
+Standart suresi olmayan ya da tezgah grubu yazilmamis adimlar yuke
+girmez - hesaplanacak bir sey yoktur.
+
+7.3  IS HANGI GUN GELIYOR  -  IKI YONTEM
+--------------------------------------------------------------------------------
+  (a) CLOSER TO REALITY (machine by machine)  -  "sahada ne olacak"
+      VARSAYILAN.  Her TEZGAH ayri bir kaynaktir.  Bir tezgaha bir parca
+      baglanir ve o parca bitmeden yenisi baglanamaz.
+
+      ORNEK: 26 saatlik is, gunde 22.5 saat calisan tezgah.
+        1. gun  22.5 saatin tamami bu parcada, BOSTA 0
+        2. gun  ayni parca 3.5 saat daha, sonra yeni parca 10 saat
+                -> 13.5 calisan, 9 SAAT BOSTA
+
+      - Simulasyon SAHANIN SU ANKI HALINDEN baslar: su an tezgahta olan
+        parca, kalan suresi kadar o tezgahi bastan isgal eder.
+      - Parcalar olay sirasiyla islenir; bir parca bir adimi bitirmeden
+        sonraki adim icin siraya girmez.
+      - Calisilmayan gunler zaman ekseninde yoktur: hafta sonu isi
+        uzatmaz, erteler.
+
+      OLCULEN:
+        BUSY        tezgahlarin gercekten kestigi saat.  KAPASITEYI
+                    ASAMAZ - bir tezgah gununden fazlasini yapamaz.
+        QUEUE       o gun hazir olup BASLANAMAYAN is (saat)
+        QUEUE_N     ayni seyin PARCA SAYISI olarak karsiligi.  Hangi
+                    parcadan kac tane oldugu da tutulur (queue_n_by),
+                    sayfa satirlari PARCA GRUBUNA cevirebilsin diye.
+        WITH_QUEUE  busy + queue.  KAPASITEYI ASAN TEK OLCU BUDUR.
+        IDLE        kapasite - busy: tezgah var, baglanacak parca yok
+        started / finished  o gun baglanan / inen parca sayisi
+
+  (b) WORK IT THROUGH (standard times)  -  "kaba yuk ne kadar"
+      Takvim ileri yurutulur: her adim standart suresini alir ve is,
+      yeri olan gunlere yayilir.  Tanimi geregi gunu kapasitesinin
+      uzerinde doldurmaz; siga kadari o donemde, sigmayani TASAN
+      olarak bildirilir.
+
+  KALDIRILAN YONTEM: BY LEAD TIME.  Parcalarin tarihsel olarak o adima
+  ne zaman ulastigina bakiyordu.  Tarihsel sure sahanin kuyrugunu ZATEN
+  icinde tasir; onu bir de kapasiteye karsi kuyruga sokmak AYNI KUYRUGU
+  IKI KEZ sayar.  Olculdu: 15.530 saatlik is icin 196.027 saat devir -
+  on iki kat.  v50'de kaldirildi.
+  (Lead time hesabinin kendisi duruyor: WATERFALL'daki REMAINING
+   tahmini ondan beslenir.  Kaldirilan sey, ondan KAPASITE PLANI
+   cikarmaktir - bkz. 3.2.)
+
+7.4  DEVIR  (kapasiteyi asan is)
+--------------------------------------------------------------------------------
+Asagidaki aritmetik WORK IT THROUGH icindir.  CLOSER TO REALITY'de
+devir ayri bir hesap degildir: bekleme simulasyonun ICINDE olusur ve
+QUEUE / QUEUE_N olarak okunur.
+
+Her grup icin, her gun:
+
+    BEKLEYEN = dunden kalan  +  bugun gelen
+    YAPILAN  = min(bekleyen, kapasite)
+    DEVIR    = bekleyen - yapilan        -> YARINA GECER
+
+Ornek: 16 tezgah, gunde 360 saat kapasite, o gune 500 saat is geliyor.
+360'i yapilir, 140'i yarin hala oradadir ve ustune yarinin isi gelir.
+
+Calisilmayan gunde kapasite 0'dir: hicbir is yapilmaz, hepsi ertesine
+kalir.
+
+SHOW secimi ile gunun hangi okunusunu gordugunuzu secersiniz:
+    capacity I will use      o gun gercekten kesilecek saat.  %100'u
+                             asmaz - bu PLANDIR.
+    with the backlog on top  o saat + o gun baslanamayan is
+                             (VARSAYILAN).  %100'u asan olcu budur.
+    machine hours unused     tezgah var, baglanacak parca yok
+    parts waiting            o gun sirada bekleyen PARCA SAYISI -
+                             FARKLI SERI sayilir, bekleyen is araligi
+                             degil.  Gunun toplami gruplarin toplami
+                             degil, o gun bekleyen farkli parcalarin
+                             BIRLESIMIDIR.
+                             Parca saymak icin parcalari tek tek takip
+                             etmek gerekir; sadece CLOSER TO REALITY
+                             bunu yapar.
+
+YUZDELER acilip kapanabilir ("show %"), varsayilan KAPALI.  SHOW,
+yuzde ve grup filtresi sadece CIZIMI degistirir - simulasyon yeniden
+kosmaz.
+
+Renk HER ZAMAN GERCEK YUKU gosterir, hangi sutun acik olursa olsun
+(tezgah modunda with_queue / kapasite):
+    yesil <=70%,  sari <=90%,  turuncu <=100%,  kirmizi >100%
+
+SATIRLAR (ROWS) uc turlu okunur:
+    machine group   tezgah grubu basina (varsayilan).  Kapasite ve
+                    yuzde burada anlamlidir.
+    part group      ayni gunler, ayni sayilar, PARCA GRUBU basina.
+    part            tek tek parca basina.
+Parca satirlarinda KAPASITE SUTUNU VE YUZDE YOKTUR: kapasite tezgaha
+aittir, parcaya degil.  Ozet sutunu, PARCA SAYAN gosterimlerde TOPLAM
+DEGIL "EN YOGUN GUN"dur: uc gun bekleyen bir parcayi uc kez saymak,
+sahadaki parca sayisindan buyuk ve anlamsiz bir rakam uretir.  Saat
+sayan gosterimlerde toplam anlamlidir ve toplanir.  Tezgah grubu secimi yine gecerlidir - "sadece
+FINISH'te sirada bekleyenler, parca grubuna gore" sorulabilir.
+MACHINE HOURS UNUSED parcaya bolunemez (bosta duran tezgahin sahibi
+yoktur), o secimde parca satirlari bos gelir ve sayfa bunu soyler.
+
+FILTRELER: bu sayfa da BOLUM 8'deki ortak seridi kullanir (ENGINEER /
+GROUP / PART, TECO-MRB-SCRAP, SERIAL LIST, BY WIP PARTS).  Tek fark,
+TARIH ARALIGI yerine HOW FAR AHEAD (kac gun ileri) olmasidir.  PART
+cipleri yalniz ROTASI OLAN parcalari gosterir.
+
+PARCA FILTRESI NE YAPAR (v52'de degisti):
+    Varsayilan olarak BUTUN SAHA calismaya devam eder; parca filtresi
+    yalnizca KIMIN SAYILARININ gosterilecegini secer.  Boylece secilen
+    parca, digerlerinin arkasinda gercekten bekler.  Renk her zaman
+    GERCEK TOPLAM YUKU gosterir.
+    "when parts are filtered, the rest still use the machines"
+    kutucugu kapatilirsa eski okuma geri gelir: sanki sahada sadece o
+    parcalar varmis gibi - bos bir atolyede "ne olurdu" sorusu.
+    Olculdu: butun saha 398 seri / 2.723 sa  ->  ayni parca yalniz
+    basina 203 seri / 2.118 sa.
+
+COK UZUN ZAMANDIR DURAN PARCALARI ALMAMA (v51):
+    LEAVE OUT PARTS WAITING LONGER THAN [N] days
+Iki aydir hic hareket etmemis bir parca yarin bir tezgaha gelmez, ama
+butun kalan rotasi "gelecek is" olarak sayilir.  Bekleme olcusu diger
+sayfalarla AYNIDIR: parcanin durdugu operasyondaki son girisinden bu
+yana gecen sure (bkz. waiting_hours).  Kac parcanin dustugu sayfanin
+altinda yazar.
+    DIKKAT (olculdu): duran parcalar cikinca PENCERE ICINDE KESILEN
+    saat ARTABILIR - kuyruk acilir, tezgahlar ayni gunlerde daha cok
+    is bitirir.  Azalan sey toplam IS LISTESIDIR.
+
+
+================================================================================
+BOLUM 8   ORTAK FILTRELER
+================================================================================
+Butun analiz sayfalarinda ayni sekilde calisirlar.
+
+  WHEN           ALL TIME / FW WEEK / FW RANGE / MONTH / DATES
+                 FW hafta numaralari HAFTA BASLANGICINA gore hesaplanir.
+                 HER SAYFANIN KENDI HAFTA BASLANGICI OLABILIR (v56):
+                 DATA & SETTINGS > WORKING WEEK > PER PAGE.  Rework Cuma
+                 toplantisinda, darbogaz Pazartesi yurunuyorsa ikisi
+                 ayri baslangic kullanabilir.
+                 HICBIR SATIR YENIDEN YAZILMAZ: satirin TARIHI degismez,
+                 degisen tek sey sayfanin ona koydugu hafta ETIKETIDIR
+                 ve o etiket sayfa cizilirken hesaplanir.  Bu yuzden iki
+                 sayfa ayni anda farkli haftalar okuyabilir.
+  ENGINEER       parts tablosundaki muhendis
+  GROUP          parca grubu
+  PART           bir ya da birden fazla parca
+  SERIAL         elle girilen/yapistirilan seri listesi
+  MACHINES       secilen tezgahtan SECILEN ZAMAN ARALIGINDA gecen
+                 seriler.  Seri listesiyle birlikte kullanilirsa KESISIM
+                 alinir (ikisi de kisitlamadir).
+  TECO/MRB       EXCLUDE (o isaretlileri cikar) / ONLY (sadece onlar)
+  BY WIP PARTS   sadece sahadaki (sevk edilmemis) parcalar
+  WAITING > N    N gunden uzun suredir bekleyen seriler.  Bekleme suresi
+                 parca bittiginde yok olur, yani tamamlanmis ya da sevk
+                 edilmis parca asla "hala bekliyor" gorunmez.
+
+Filtreler BIRLIKTE calisir: hepsi birer kisitlamadir, sonuc hepsini
+ayni anda saglayan satirlardir.
+
+
+================================================================================
+BOLUM 8b  CUSTOM ANALYSIS SAYFASI  -  SECILEN ADIMLAR UZERINDE KANBAN  (v64)
+================================================================================
+Kullanici parcalari, her parcanin traveler'indan istedigi adimlari secer ve
+her adimi KENDI ADLANDIRDIGI bir gruba koyar (MASK, COATING, BAKE ...).
+Farkli parcalarin farkli adimlari ayni grupta olabilir.  Her parcanin bir
+START adimi vardir: parcayi tabloya sokar, kendisi CIZILMEZ.  Tanimlar
+veritabaninda (meta 'acc_analyses') isimle saklanir, herkes gorur.
+
+KONUM - ARADAKI ADIMLAR YOK SAYILIR:
+  Parcanin rotasi yalniz START + secilen adimlardan olusan KISA bir rota
+  gibi dusunulur, yalniz bu adimlarin girisleri okunur ve 0.3'teki kural
+  aynen uygulanir:
+    - secilen adimlardan uretim girisi olan EN ILERIDEKI
+    - X ile kapandiysa  -> bir sonraki SECILEN adimda BEKLIYOR
+    - kapanmadiysa      -> o adimda ISLENIYOR (kutuda sayilir, turuncu)
+  START'tan ciktiktan sonra sonraki secilen adima girisi yoksa parca O
+  ADIMDA BEKLIYOR gorunur - arada ne yaptigina bakilmaz.
+  START'a hic girmemis ya da hala START'ta olan parca tabloda YOK.
+  SON secilen adimi X ile kapanan parca BITMISTIR, tablodan cikar.
+
+KUTU: grup sutununda (parca, adim) basina bir kutu; adet + seriler.
+  Rozet = secilen adimlardaki SON giristen bugune TAKVIM GUNU (3.2 gibi).
+  Kutu en uzun bekleyen 12 seriyi gosterir, tiklayinca hepsi acilir.
+  Satilmis + TECO/MRB/SCRAP seriler varsayilan olarak cikarilir
+  ('Show sold / TECO / MRB / SCRAP' ile gosterilir).
+
+GUNLUK RAPOR: secilen FW'nin her gunu, SON secilen adimi o gun BITIREN
+  seri sayisi, parca rengine gore ust uste.  PART BOTTLENECK 'Finished'
+  ile BIREBIR ayni sayi: X gunu; X'siz ama ileri bir traveler adimina
+  girmisse son giris gunu.  Satilmis/isaretli seriler de SAYILIR
+  (gecmis veri; bottleneck'te BY WIP PART kapali).  Ileri adima gecmis seri tablodan da cikar.
+HAFTALIK HEDEF: parcalar STG gruplarina ayrilir; grup basina haftalik
+  hedef.  Biten = ayni FW'de son adimi X ile kapanan seri; beyaz = kalan.
+
+SHOW REWORK (analiz secenegi): tablodaki bir serinin RW kaydi (OpAc =
+  redlendigi op) START'tan SONRA (START haric) ve son secilen adima KADAR
+  (dahil) olan traveler operasyonlarindan birindeyse - secilmemis ara
+  op'lar dahil, tarihten bagimsiz - yanina kirmizi nokta ve o op'lar
+  yazilir; grup altinda RW'li seri sayisi.
+
+Hiz: acilista HICBIR SEY hesaplanmaz; sekme acilinca yalniz secilen
+analizin parcalari okunur (olculen: <0.1 sn).
+
+
+================================================================================
+BOLUM 9   BILINEN SINIRLAR  -  PROGRAM NEYI BILMEZ
+================================================================================
+Bunlar eksiklik degil, VERININ SINIRIDIR.  Bir sayiyi sorgularken once
+buraya bakin.
+
+  1) "SU AN KESILIYOR" DIYE BIR VERI YOK.
+     SAP girisleri "su tarihte su tezgahta su operasyon onaylandi" der.
+     Program "tezgahta" dedigi zaman bunu CIKARIM yapiyordur: o adima
+     giris var ama X yok.  Gercekte parca cikmis ama X girilmemis
+     olabilir - DATA sayfasindaki X CHECK uyarisi bunlari sayar.
+
+  2) GIRILMEYEN ZAMAN, OLMAMIS ZAMANDIR.
+     Bir operasyona sure girilmediyse program o operasyonu yapilmamis
+     sayar.  Rota adimlarinin bir kismina hic giris yapilmayan
+     atolyelerde bu, parcayi oldugundan geride gosterebilir (kural 0.4
+     bunu telafi eder: en ileri giris esastir, aradakiler gecilmis
+     sayilir).
+
+  3) STANDART SURE YOKSA ILERLEME YUZDESI DE YOKTUR.
+     Bitti karari yine X'tir; yalniz turuncu hucre / sayac yuzde
+     gosteremez.  DATA HEALTH bu adimlari listeler.
+
+  4) TAHMIN GECMISIN ORTALAMASIDIR.
+     Lead time, olmus islerin ortalamasidir; yeni bir darbogaz ya da
+     yeni bir tezgah henuz o ortalamanin icinde degildir.
+
+  5) FORECAST TALEBI BILMEZ.
+     Sadece SU AN SAHADA OLAN parcalarin kalan islerini dagitir.
+     Onumuzdeki ay girecek yeni siparisler hesaba KATILMAZ.
+
+  6) REWORK SURESI KAPASITEYE GIRMEZ.
+     FORECAST yuku rota standart surelerinden kurar; rework bir
+     belirsizliktir ve tahmine eklenmemistir.
+
+  7) TEZGAH KODU GIRILMEMIS SEMBOL HICBIR YERDE SAYILMAZ.
+     B1000'de veri gostermez, FORECAST'te kapasiteye girmez.
+
+  8) SEVKIYAT RAPORU GELMEDIYSE PARCA HALA WIP'TIR.
+     Cikmis ama raporu gelmemis parca sahada gorunmeye devam eder.
+
+================================================================================
+
+
+BOLUM 10  BIRLESIK PARCALAR  (v65)
+============================================================
+Tanim: meta 'part_merges' = [{ad, uyeler}], sayfa anahtarlari meta
+'part_merge_pages' = {sayfa: true}.  Birlesik parcanin anahtari adidir
+(bosluksuz, buyuk harf).
+
+- Rota: ilk uyenin traveler'i (uyelerinki farkliysa DATA'da uyari).
+- Veri: tum uyelerin malzeme kodlari birlikte okunur (wf_resolve_
+  material_keys uyelerin birlesimi).  Bir seri tek malzemeye ait
+  oldugu icin sayimlar dogrudan toplanir, cift sayim olmaz.
+- Grup / muhendis: ilk uyeninki.  STG1 filtresi birlesik parcanin
+  tum serilerini getirir (ikinci uye STG9 olsa bile).
+- Birlesik anahtar sayfa anahtarindan bagimsiz HER ZAMAN cozulur;
+  anahtar yalniz LISTELERI (parca baloncuklari, filtreler, parca
+  indeksi) degistirir.  Kayitli secimler bu yuzden bozulmaz.
+- RW ANALYSIS tum parcalar tablosu: uyeler tek satir, seri / saat /
+  giris toplami.
+- Dogrulama: tests/test_part_merge.py - ikiz parca (ayni traveler,
+  kopya kayitlar) ile her sayfanin birlesik rakami = iki parcanin
+  toplami (analiz saat/seri/FTY, cause trend, waterfall satirlari,
+  bottleneck her hucre, forecast saatleri, B1000 seri sayisi).
+
+
+BOLUM 11  SAKLANAN OZETLER  (agg_cache, v66)
+============================================================
+Acilista gereken ozetler (satir sayilari, yillar, operasyon adlari,
+seri listeleri, satilmis seriler, veri sagligi sayimlari) veritabanindaki
+agg_cache tablosunda veri surumu (data_version) ile birlikte saklanir.
+- Surum ayniysa saklanan cevap okunur, degilse yeniden hesaplanip yazilir.
+- Her yukleme / silme / traveler degisikligi surumu oynatir -> hepsi
+  birden eskir; eski cevap verilemez.
+- Bir kopya veri tablosuna yazdiysa (surum oynamadan) o kopya saklanan
+  cevaplara guvenmez, yeniden sayar.
+- Salt okunur kopya yazmaz, yalniz okur / hesaplar.
+Hesap sonuclarini DEGISTIRMEZ; yalniz ayni cevabi daha ucuza getirir
+(tests/test_v66.py: saklanan = dogrudan sayim).
+
+
+============================================================
+BOLUM 12  MRB / SCRAP / TECO SAYIMLARI  (v67)
+============================================================
+- TOTALS kutulari: secili parca/tarih filtresine giren kayitlar,
+  turune gore.  Kutu altindaki FIXED n = FIXED olup onceki turu o kutu
+  olan kayitlar (TECO->Fixed, MRB->Accept, REPAIR->Completed).  SCRAP
+  altindaki REMOVED n = SCRAP->Removed from system.  FIXED kutusu
+  REMOVED'lari saymaz.  TECO->Became SCRAP gibi tur degisimi FIXED
+  sayilmaz; kayit yeni turune gecer.
+- BY PART GROUP: ayni kayitlar parca grubuna gore (TECO, MRB, SCRAP,
+  REPAIR, FIXED, REMOVED); grubu olmayan ya da parcasi bulunamayan
+  "(NO GROUP)".
+- Kaydin parcasi: once veriden (seri -> malzeme -> parca), bulunamazsa
+  elle yazilan parca no, o da yoksa ham malzeme kodu (yalniz gosterim).
+  Elle yazilan parca, parca filtresi ve grup sayiminda da kullanilir.
+- MRB ENTERED: girisi yapilmis MRB.  MRB sayisi = girisi yapilmamis
+  MRB'ler; ENTERED ayri sayilir.  Filtrelerde de ayri tur (MRB secimi
+  MRB ENTERED'i kapsamaz).  MRB ENTERED -> Accept da MRB kutusunun FIXED
+  sayisina girer.
+- LAST UPDATED (sag ust): son veri yuklemesinin zamani (meta
+  last_upload_at; yalniz yuklemeler yazar, traveler duzeltmesi / silme
+  degil).  Eski veritabaninda damga yoksa rework satirlarindaki en yeni
+  yukleme saati.
+- LAST OP DATE: serinin en son uretim girisi tarihi (uretim girisi
+  yoksa rework tarihi) - diger sayfalarla ayni kural (latest_booking).
+
