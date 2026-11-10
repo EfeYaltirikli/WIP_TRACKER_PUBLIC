@@ -459,8 +459,9 @@ Her ardisik operasyon cifti icin:
               Onceki adima hic giris yoksa rotada geriye dogru ilk
               girisli adim kullanilir.
               Bu operasyon X ile kapanmamissa o seri bu adima girmez.
-    CUTTING   bu operasyona girilen MAKINE SURESI; makine suresi
-              olmayan operasyonda (yalniz iscilik) ISCILIK suresi
+    OPERATION TIME (eski adi CUTTING)  bu operasyona girilen MAKINE
+              SURESI; makine suresi olmayan operasyonda ISCILIK suresi.
+              Yalniz uretim girisleri - rework saati girmez (2.2.0).
     QUEUEING  lead - cutting  (yani beklenen kisim)
     FLOW EFF. cutting / lead   -> adimin ne kadari gercekten kesimdi
 
@@ -476,23 +477,43 @@ TARIH FILTRESI (2.1.3) - modulde secilir:
                 satilmis tum seriler.
 Waterfall'daki AVG LEAD tarih filtresine bakmaz, her zaman tum zamandir.
 
-OPERASYON GRUPLARI (2.2.0): kullanici rotanin bir araligina ad verir
-(TURN = 130 -> 150), ayni adi birden fazla parcaya verebilir.
-    Bir serinin suresi = TO operasyonunun X'i - FROM operasyonunun
-                         tamamlanmasi (X'i; X'siz gecildiyse son girisi).
-                         Iki operasyonda da kaydi olmayan seri girmez.
-    CUTTING            = FROM'dan SONRAKI operasyonlardan TO'ya kadar
-                         (TO dahil) olanlarin isi: makine suresi, yoksa
-                         iscilik.
-    QUEUE              = sure - cutting  (cutting sureden buyukse hepsi
-                         cutting sayilir, * isareti)
-    Negatif ve medyanin 3 katindan buyuk degerler parca + aralik
-    bazinda atilir (en az 3 deger varsa).
-    GRUP ORTALAMASI    = gruptaki tum parcalarin kalan TUM serilerinin
-                         ortalamasi (havuz; cok serili parca daha agir
-                         basar).  Her parcanin kendi ortalamasi altinda.
-    Aralik rotanin tamami uzerinden okunur (clean op / tekrar eden op
-    ayiklamasi gruplara uygulanmaz).
+OPERASYON GRUPLARI (2.2.0): kullanici bir parcanin operasyonlarini kendi
+adlandirdigi gruplara koyar (TURN = 130, 140, 150); ayni grup adina
+birden fazla parcanin operasyonlari girebilir.
+    ZINCIR      Bir grup, ILK operasyonundan ONCEKI operasyonun
+                tamamlanmasindan SON operasyonunun X'ine kadar olculur.
+                rota 1..7, gruplar {1,2,3} {4,5} {6,7}:
+                  {1,2,3} = 1 bitis -> 3 X   (1'den once bir sey yok)
+                  {4,5}   = 3 bitis -> 5 X
+                  {6,7}   = 5 bitis -> 7 X
+                Boylece gruplar birbirini bosluksuz izler, hicbir sure
+                iki kez sayilmaz.  Arasi bos secilen operasyonlar (1,2
+                ve 6) parca parca olculup toplanir; seri hepsinde
+                olculebiliyorsa girer.
+    SEKANS      Sekansli operasyon (280/0, 280/2, 280/7) TEK operasyondur.
+                Tamamlanmasi = SON zaman girisi yapilan sekansin
+                kapanisi (X'i).  O sekans X'siz ise operasyon kapanmamis
+                sayilir (grubun sonu olamaz); grubun BASLANGICI olarak
+                son girisi kullanilir.  Operation time = tum sekanslar.
+    OPERATION TIME = grubun kendi operasyonlarinin isi: makine suresi,
+                yoksa iscilik - YALNIZ uretim girisleri, rework haric.
+    QUEUE       = sure - operation time (operation time sureden buyukse
+                hepsi operation time sayilir, * isareti)
+    Negatif ve medyanin 3 katindan buyuk degerler parca + grup bazinda
+    atilir (en az 3 deger varsa).
+    GRUP        = gruptaki tum parcalarin kalan TUM serilerinin
+                ortalamasi (havuz; cok serili parca daha agir basar).
+    ALT GRUP    = ayni alt grup adini tasiyan parcalarin serileri, ayni
+                havuz kuraliyla.  Parca satiri = o parcanin kendi
+                ortalamasi.
+    Rota tamami uzerinden okunur (clean op / tekrar eden op ayiklamasi
+    gruplara uygulanmaz).
+
+OPERATION TIME (2.2.0, eski adi CUTTING): makine suresi, makine suresi
+olmayan operasyonda iscilik.  Yalniz URETIM girisleri sayilir - rework
+girislerinin saati hicbir zaman operation time degildir (sema 27:
+wf_part_data.mach_ops / lab_ops).  Eski bir surumun yazdigi satirda bu
+alanlar bostur; o satir eski toplamdan (rework dahil) okunur.
 
 OPERASYON NUMARASI YAZIMI (2.2.0): RW / Cause tablolarinda operasyon
 traveler'daki yazimla gosterilir - bastaki sifirlar ve ".00" atilir

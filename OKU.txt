@@ -84,25 +84,51 @@ eski surumle yan yana calisabilir.
   - YENI SAYFA: LEAD TIME ANALYSIS (sol menude Waterfall'in altinda).
     Waterfall'daki "Lead time / queue / flow efficiency" modulu buraya
     tasindi, Waterfall'dan kaldirildi.  Hesap AYNI: onceki operasyonun
-    tamamlanmasindan bu operasyonun X'ine kadar gecen duz sure; CUTTING =
-    makine suresi, makine suresi yoksa iscilik.
+    tamamlanmasindan bu operasyonun X'ine kadar gecen duz sure; OPERATION
+    TIME = makine suresi, makine suresi yoksa iscilik (rework haric).
       * Filtreler diger sayfalardaki gibi (muhendis, grup, parca, zaman,
         flag, seri listesi, tezgah).
       * Varsayilan birim GUN (Days); Hours ile saate cevrilir.
       * Date filter:  By op date / By serial / SOLD IN RANGE
         Sold in range = satis tarihi (sevk raporu) secilen araliga dusen
         seriler alinir, bu serilerin TUM operasyonlari kullanilir.
-      * Ustte tum rota: LEAD, CUTTING, QUEUE, FLOW EFF.
-  - OPERASYON GRUPLARI (ayni sayfa, sagdaki modul): "New" ile bir analiz
-    acin, her satira GRUP ADI (TURN, MILL ...), PARCA, FROM op, TO op
-    yazin.  Ayni grup adini birden fazla parcaya verebilirsiniz.
-      Sure = TO operasyonunun bitisi (X) - FROM operasyonunun bitisi
-      (ornek: TURN = 130 -> 150 ise 150 bitis - 130 bitis).
-    Grup satiri: gruptaki tum parcalarin TUM serilerinin ortalamasi;
-    altinda her parcanin kendi ortalamasi.  Analizler herkes icin
-    kaydedilir (Edit / Delete).  Excel'de "OP GROUPS" sayfasi.
+      * Ustte tum rota: LEAD, OP. TIME, QUEUE, FLOW EFF.
+  - OPERASYON GRUPLARI YENIDEN YAPILDI (New / Edit artik Custom Analysis
+    gibi uc sutunlu bir kurma ekrani):
+      1 PARTS       parca ekleyin (arama + cift tik).  "Sub group" ile
+                    parcaya alt grup adi verin (STG1 BLISK ...).
+      2 OPERATIONS  secilen parcanin TUM operasyonlari otomatik gelir.
+                    Tikla / Shift+tik (aralik) / Ctrl+tik ile secin.
+      3 GROUPS      "+ Add group", ad ve renk verin.  Secili
+                    operasyonlari gruba SURUKLEYIN ya da gruba tiklayin.
+                    Ya da grubun ustundeki First op / Last op
+                    listelerinden baslangic - bitis secin.  Parcayi
+                    gruba surukleyince o parcanin operasyonlari acilir
+                    ve First op listesi cikar.
+    Ustteki serit rotanin tamamini grup renkleriyle gosterir; her grubun
+    altinda canli ortalama (tum zaman) yazar.
+    ZINCIR BOZULMAZ: bir grup, ilk operasyonundan ONCEKI operasyonun
+    bitisinden son operasyonunun bitisine (X) kadar olculur.
+      rota 1-2-3-4-5-6-7,  gruplar {1,2,3} {4,5} {6,7}
+      {1,2,3} = 1 bitis -> 3 bitis,  {4,5} = 3 bitis -> 5 bitis,
+      {6,7} = 5 bitis -> 7 bitis
+    SEKANSLI OPERASYON (280/0, 280/2, 280/7) burada TEK operasyondur
+    (280): bitisi, SON zaman girisi yapilan sekansin kapanisidir.
+    Sonuc tablosu: GRUP > ALT GRUP (o alt gruptaki parcalarin tum
+    serileri).  Parca satirlari "Show parts" ile acilir, normalde
+    KAPALIDIR.  Bir satira tiklayinca Serials grafigi o grubun / alt
+    grubun / parcanin serilerini gosterir.
+    Ilk 2.2.0 ile kaydedilmis analizler aynen okunur.
+  - CUTTING -> OPERATION TIME: sayfada ve Excel'de ad degisti.
+    REWORK SAATLERI ASLA GIRMEZ: operation time artik yalniz uretim
+    girislerinin makine suresidir (yoksa isciligi).  Bunun icin
+    veritabani bir kez guncellenir (sema 27): programin ILK acilisi
+    biraz uzun surebilir, veri yeniden yuklemek gerekmez.  Herkes yeni
+    surumu kullanmali - eski surumle veri yuklenirse o satirlarda
+    rework saati yine icinde kalir (bir sonraki yuklemede duzelir).
+  - DUZELTME: Waterfall sayfasinda rota gorunmuyordu (ilk 2.2.0).
   - GRAFIKLER (ayni sayfa, tablolarin altinda):
-      ROUTE PROFILE  her operasyon bir sutun: altta cutting (yesil),
+      ROUTE PROFILE  her operasyon bir sutun: altta operation time (yesil),
                      ustte queue (sari), kesik cizgi ortalama.  Bir
                      sutuna (ya da Steps tablosunda bir satira)
                      tiklayinca SERIALS grafigi o adimi gosterir.

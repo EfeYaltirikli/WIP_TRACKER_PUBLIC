@@ -1753,6 +1753,12 @@ CREATE TABLE IF NOT EXISTS wf_part_data (
    -- step was finished.  prog is the Toplam Is hours of production
    -- bookings that are not setups: how far the part is through the step.
    x_dt TEXT, prog REAL DEFAULT 0,
+   -- 2.2.0: the machine and labour hours of PRODUCTION bookings only
+   -- (machine_hour / std_hour above include the rework bookings).  The
+   -- lead time page's OPERATION TIME is read from these, so a rework
+   -- never counts as operation time.  NULL on a row written by an older
+   -- program - the reader then falls back to the old columns.
+   mach_ops REAL, lab_ops REAL,
    PRIMARY KEY (material_key, serial_key, opac, seq));
 CREATE INDEX IF NOT EXISTS ix_wf_part_serial ON wf_part_data (material_key, serial_key);
 
@@ -1896,6 +1902,12 @@ CREATE TABLE IF NOT EXISTS wf_part_data (
    -- step was finished.  prog is the Toplam Is hours of production
    -- bookings that are not setups: how far the part is through the step.
    x_dt TEXT, prog REAL DEFAULT 0,
+   -- 2.2.0: the machine and labour hours of PRODUCTION bookings only
+   -- (machine_hour / std_hour above include the rework bookings).  The
+   -- lead time page's OPERATION TIME is read from these, so a rework
+   -- never counts as operation time.  NULL on a row written by an older
+   -- program - the reader then falls back to the old columns.
+   mach_ops REAL, lab_ops REAL,
    PRIMARY KEY (material_key, serial_key, opac, seq));
 CREATE INDEX IF NOT EXISTS ix_wf_part_serial ON wf_part_data (material_key, serial_key);
 """
@@ -1916,7 +1928,7 @@ SESSION_FORGET_SECONDS = 3600
 # Bumped whenever SCHEMA or Database._build_schema() changes, so a database
 # built by an older version gets brought up to date once and every open
 # after that skips the setup entirely.
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 # The people who get an account the first time the app opens a database.
 # Roles: admin sees and changes everything; sef / manager / leader / user
@@ -2745,6 +2757,11 @@ class Database:
                self.conn.execute("DELETE FROM agg_cache")
            except sqlite3.Error:
                pass                    # no summaries stored yet
+       if wf_cols and "mach_ops" not in wf_cols:
+           # 2.2.0 (schema 27): operation time without the rework hours
+           self.conn.execute("ALTER TABLE wf_part_data ADD COLUMN mach_ops REAL")
+           self.conn.execute("ALTER TABLE wf_part_data ADD COLUMN lab_ops REAL")
+           needs_partdata_rebuild = True
        if "dt_ops" not in wf_cols:
            self.conn.execute("ALTER TABLE wf_part_data ADD COLUMN dt_ops TEXT")
            # ALTER TABLE leaves the new column NULL on every existing row,
@@ -5096,12 +5113,14 @@ class Database:
        self.conn.execute(
            "INSERT INTO wf_part_data (material, material_key, serial, "
            "  serial_key, opac, seq, dt, dt_ops, dt_first, dt_ops_first, "
-           "  rework, std_hour, machine_hour, done_x, x_dt, prog) "
+           "  rework, std_hour, machine_hour, done_x, x_dt, prog, "
+           "  mach_ops, lab_ops) "
            "SELECT material, material_key, serial_no, "
            "       serial_key, opac, seq, MAX(dt), MAX(dt_ops), "
            "       MIN(dt), MIN(dt_ops), "
            "       SUM(rework), SUM(tot), SUM(mach), MAX(kapanis), "
-           "       MAX(CASE WHEN kapanis=1 THEN dt END), SUM(ilerleme) "
+           "       MAX(CASE WHEN kapanis=1 THEN dt END), SUM(ilerleme), "
+           "       SUM(mach_p), SUM(tot_p) "
            "FROM ("
            "  SELECT material, UPPER(REPLACE(material,' ','')) material_key,"
            "         serial_no, serial_key,"
@@ -5120,7 +5139,9 @@ class Database:
            "         CASE WHEN COALESCE(setup,0)<>0 THEN 0"
            "              WHEN COALESCE(mach_hour,0)>0 THEN mach_hour"
            "              ELSE COALESCE(lab_hour, tot_hour, 0) END"
-           "              ilerleme"
+           "              ilerleme,"
+           # 2.2.0: the same hours once more, PRODUCTION only
+           "         COALESCE(mach_hour,0) mach_p, COALESCE(tot_hour,0) tot_p"
            "  FROM ops WHERE serial_key<>'' AND op_key<>''"
            "  UNION ALL"
            "  SELECT material, UPPER(REPLACE(material,' ','')) material_key,"
@@ -5133,7 +5154,7 @@ class Database:
            # A REWORK booking never closes a step and is never progress -
            # whatever its X says.  It used to count: MAX(last_x) ran over
            # both tables, so an X on a rework row finished the operation.
-           "         0 kapanis, 0.0 ilerleme"
+           "         0 kapanis, 0.0 ilerleme, 0.0 mach_p, 0.0 tot_p"
            "  FROM rw WHERE serial_no<>'' AND reject_op<>''"
            ") WHERE dt IS NOT NULL AND dt<>'' "
            "GROUP BY material_key, serial_key, opac, seq")
@@ -5499,14 +5520,22 @@ class Database:
                return iso(text)
            except Exception:
                return fallback
+       # 2.2.0: production-only hours; a database this copy could not
+       # upgrade (read-only) has no such columns - NULL then, like a row
+       # written by an older program
+       has_ops = self.__dict__.get("_pd_has_ops")
+       if has_ops is None:
+           has_ops = self._pd_has_ops = "mach_ops" in {
+               r["name"] for r in self.conn.execute("PRAGMA table_info(wf_part_data)")}
+       extra = "mach_ops, lab_ops" if has_ops else "NULL, NULL"
        for (material, serial, serial_key, opac, seq, done_x, dt_s, dt_ops_s,
             dt_first_s, dt_ops_first_s, rework, std_hour, machine_hour, x_dt_s,
-            prog) in self.rows(
+            prog, mach_ops, lab_ops) in self.rows(
                "SELECT material, serial, serial_key, opac, "
                "COALESCE(seq,'') AS seq, COALESCE(done_x,0) AS done_x, "
                "dt, dt_ops, dt_first, dt_ops_first, rework, "
-               "std_hour, machine_hour, x_dt, COALESCE(prog,0) AS prog "
-               "FROM wf_part_data WHERE material_key IN (%s)" % placeholders,
+               "std_hour, machine_hour, x_dt, COALESCE(prog,0) AS prog, %s "
+               "FROM wf_part_data WHERE material_key IN (%s)" % (extra, placeholders),
                tuple(keys)):
            try:
                dt = iso(dt_s)
@@ -5543,7 +5572,14 @@ class Database:
                        # decides whether it is finished.
                        "labour": prog or 0.0,
                        "machine_hour": machine_hour or 0.0,
-                       "labour_hour": std_hour or 0.0})
+                       "labour_hour": std_hour or 0.0,
+                       # OPERATION TIME (2.2.0): production bookings only,
+                       # never a rework's hours.  Falls back to the totals
+                       # on a row an older program wrote.
+                       "machine_ops": (machine_hour or 0.0) if mach_ops is None
+                       else mach_ops,
+                       "labour_ops": (std_hour or 0.0) if lab_ops is None
+                       else lab_ops})
        return out
 
    def labour_by_op(self, material_keys, serial_keys=None):
@@ -7771,25 +7807,42 @@ def lead_entries(db, part_key, d1, d2, serial_keys=None,
 # ---------------------------------------------------------------------------
 #  LEAD TIME ANALYSIS - NAMED OPERATION GROUPS  (2.2.0)
 # ---------------------------------------------------------------------------
-# On the LEAD TIME ANALYSIS page the user names a stretch of a part's route
-# - TURN = 130 -> 150 - and may give several parts a stretch under the same
-# name.  One serial's figure for the stretch is
+# On the LEAD TIME ANALYSIS page the user puts a part's operations into
+# groups of their own naming - TURN = 130, 140, 150 - and may give several
+# parts operations under the same name.
 #
-#     X of the LAST operation (150)  minus  completion of the FIRST (130)
+# THE CHAIN IS NEVER BROKEN.  A group is measured like the steps it is
+# made of, each from the operation before it:
 #
-# the same completion-to-completion clock hours as a single step
-# (lead_gap_hours), over several operations at once.  Its cutting time is
-# the work content (lead_cut_hours: machine, else labour) of every
-# operation AFTER the first up to the last - the work done in between.
-# Negative and far-off figures are dropped per part and stretch
-# (lead_keep_mask).  The group's figure is the average over EVERY kept
-# serial of every part in it (pooled); each part's own average is given
-# beside it.
+#     route 1 2 3 4 5 6 7,   groups {1,2,3} {4,5} {6,7}
+#     {1,2,3}  completion of 1  ->  X of 3     (nothing comes before 1)
+#     {4,5}    completion of 3  ->  X of 5
+#     {6,7}    completion of 5  ->  X of 7
+#
+# so the groups of a route add up to the route, with no gap and nothing
+# counted twice.  Operations picked with a hole between them (1,2 and 6)
+# are measured run by run and added up; a serial needs every run.
+#
+# A SEQUENCED OPERATION IS ONE OPERATION HERE.  280/0, 280/2, 280/7 are
+# picked as 280; its completion is that of the sequence with the LAST
+# time entry (its X; passed without one - as the start of a group only -
+# its last entry).  Its operation time is all its sequences added up.
+#
+# OPERATION TIME is the work content of the group's own operations
+# (lead_cut_hours: machine, else labour - never a rework's hours).
+# Negative and far-off figures are dropped per part and group
+# (lead_keep_mask).  A group's figure is the average over EVERY kept
+# serial of every part in it (pooled); a SUB GROUP is the same over the
+# parts that carry its name; each part's own average is the detail.
 #
 # Stored in meta (shared) under LT_GROUPS_KEY as {set name: definition}:
-#     {"groups": [{"name": "TURN",
-#                  "ranges": [{"part_key", "from", "to"}]}]}   (step keys)
+#     {"parts":  [{"part_key", "sub"}],                (order, sub group)
+#      "groups": [{"name", "color", "ops": {part_key: [op, ...]}}]}
+# The first 2.2.0 build stored {"ranges": [{"part_key","from","to"}]} per
+# group; lt_groups_normalize reads those too.
 LT_GROUPS_KEY = "lt_op_groups"
+LT_GROUP_COLORS = ["#4F8EF7", "#2FBF71", "#F2A93B", "#E5567A", "#9B6CF2",
+                   "#26B8C7", "#F27A3D", "#7FB341", "#D05FC6", "#8A97A8"]
 
 
 def lt_groups_load(db):
@@ -7809,25 +7862,141 @@ def lt_groups_delete(db, name):
       db.set_meta(LT_GROUPS_KEY, allv)
 
 
-def lead_range_values(route, entries_by_serial, from_step, to_step):
-   """[(lead hours, cut hours)] - one per serial that has the stretch -
-   or None when the stretch is not on the route (or runs backwards)."""
-   pos = {route_step(c): i for i, c in enumerate(route)}
-   a, b = pos.get(from_step), pos.get(to_step)
-   if a is None or b is None or b <= a:
-      return None
-   mid = [route_step(route[i]) for i in range(a + 1, b + 1)]
-   out = []
-   for entries in entries_by_serial.values():
-      hrs = lead_gap_hours(entries.get(from_step), entries.get(to_step))
-      if hrs is None:
-         continue
-      out.append((hrs, sum(lead_cut_hours(entries.get(k)) for k in mid)))
+def lt_part_ops(db, part_key):
+   """A part's route for grouping: one entry per OPERATION NUMBER, in
+   route order - [{"op", "desc", "steps": [step keys]}].  The sequences of
+   one operation are its `steps`."""
+   out, by = [], {}
+   for c in db.wf_traveler_for(part_key):
+      k = op_key(c["op"])
+      o = by.get(k)
+      if o is None:
+         o = by[k] = {"op": k, "desc": c.get("desc") or "", "steps": []}
+         out.append(o)
+      o["steps"].append(route_step(c))
    return out
 
 
+def lt_groups_normalize(db, definition):
+   """A definition in today's shape, whatever build wrote it.  Operation
+   numbers come back as text keys, every part of every group is in
+   `parts`, every group has a colour."""
+   d = definition if isinstance(definition, dict) else {}
+   parts, seen = [], set()
+   for p in d.get("parts") or []:
+      pk = p.get("part_key")
+      if pk and pk not in seen:
+         seen.add(pk)
+         parts.append({"part_key": pk, "sub": (p.get("sub") or "").strip()})
+   groups = []
+   for gi, g in enumerate(d.get("groups") or []):
+      ops = {}
+      for pk, lst in (g.get("ops") or {}).items():
+         keys = []
+         for o in lst or []:
+            k = op_key(o)
+            if k and k not in keys:
+               keys.append(k)
+         if keys:
+            ops[pk] = keys
+      for rg in g.get("ranges") or []:           # the first 2.2.0 shape
+         pk = rg.get("part_key")
+         route = lt_part_ops(db, pk) if pk else []
+         where = {}
+         for i, o in enumerate(route):
+            for st in o["steps"]:
+               where[st] = i
+         a, b = where.get(rg.get("from")), where.get(rg.get("to"))
+         if a is None or b is None or b <= a:
+            continue
+         cur = ops.setdefault(pk, [])
+         for o in route[a + 1:b + 1]:
+            if o["op"] not in cur:
+               cur.append(o["op"])
+      for pk in ops:
+         if pk not in seen:
+            seen.add(pk)
+            parts.append({"part_key": pk, "sub": ""})
+      groups.append({"name": (g.get("name") or "").strip(),
+                     "color": g.get("color") or LT_GROUP_COLORS[gi % len(LT_GROUP_COLORS)],
+                     "ops": ops})
+   return {"parts": parts, "groups": groups}
+
+
+def lt_runs(route_ops, chosen):
+   """The chosen operations as runs of neighbours on the route:
+   ([(first position, last position)], [operations not on the route])."""
+   pos = {o["op"]: i for i, o in enumerate(route_ops)}
+   idx = sorted({pos[k] for k in chosen if k in pos})
+   missing = [k for k in chosen if k not in pos]
+   runs = []
+   for i in idx:
+      if runs and i == runs[-1][1] + 1:
+         runs[-1][1] = i
+      else:
+         runs.append([i, i])
+   return [tuple(r) for r in runs], missing
+
+
+def lt_run_bounds(a, b):
+   """(position the run is measured FROM, first position whose work
+   counts) - the operation before the run; the route's first operation
+   has nothing before it, so a run starting there is measured from its
+   own completion and its work is not in it."""
+   return (a - 1, a) if a > 0 else (a, a + 1)
+
+
+def lead_op_record(entries, steps):
+   """(record, operation time) of one operation for one serial: the
+   record of the sequence with the LAST time entry, and the operation
+   time of all its sequences.  (None, 0.0) when nothing was booked."""
+   best, cut = None, 0.0
+   for st in steps:
+      r = entries.get(st)
+      if r is None:
+         continue
+      cut += lead_cut_hours(r)
+      if best is None or r["dt"] > best["dt"]:
+         best = r
+   return best, cut
+
+
+def lead_group_values(route_ops, entries_by_serial, chosen):
+   """([(serial key, lead hours, operation hours)], problem text) for one
+   part's share of a group - every serial that has all of it."""
+   runs, missing = lt_runs(route_ops, chosen)
+   runs = [(a, b) for a, b in runs if not (a == 0 and b == 0)]
+   if not runs:
+      if missing:
+         return [], "operation %s not on the route" % ", ".join(missing)
+      return [], ("only the first operation - nothing comes before it"
+                  if chosen else "no operations picked")
+   need = set()
+   for a, b in runs:
+      ref, first = lt_run_bounds(a, b)
+      need.add(ref)
+      need.update(range(first, b + 1))
+   need = sorted(need)
+   out = []
+   for sk, entries in entries_by_serial.items():
+      recs = {i: lead_op_record(entries, route_ops[i]["steps"]) for i in need}
+      total = cut = 0.0
+      for a, b in runs:
+         ref, first = lt_run_bounds(a, b)
+         hrs = lead_gap_hours(recs[ref][0], recs[b][0])
+         if hrs is None:
+            total = None
+            break
+         total += hrs
+         cut += sum(recs[i][1] for i in range(first, b + 1))
+      if total is not None:
+         out.append((sk, total, cut))
+   return out, ("operation %s not on the route" % ", ".join(missing)) if missing else ""
+
+
 def _lead_split(vals):
-   """(lead, cut, queue, efficiency, n, overlap) of kept (lead, cut) pairs."""
+   """(lead, operation time, queue, efficiency, n, overlap) of kept
+   (lead, operation time) pairs."""
    n = len(vals)
    if not n:
       return None, None, None, None, 0, False
@@ -7839,48 +8008,102 @@ def _lead_split(vals):
            n, overlap)
 
 
+_LG_KEYS = ("avg_hours", "cut_hours", "queue_hours", "efficiency", "n", "overlap")
+_LG_CACHE = {}
+
+
 def lead_group_analysis(db, definition, d1, d2, serial_keys=None,
                         exclude_serial_keys=None, date_mode="ops"):
-   """The named operation groups of one saved set.
+   """Memoised _lead_group_analysis - the page asks again on every unit
+   or theme change.  Keyed by the data version, like lead_time_analysis."""
+   try:
+      ver = db.data_version()
+   except Exception:
+      ver = None
+   key = (db.__dict__.get("cache_id", id(db)), ver, _CACHE_GEN[0],
+          json.dumps(definition, sort_keys=True, default=str), d1, d2,
+          frozenset(serial_keys) if serial_keys else None,
+          frozenset(exclude_serial_keys) if exclude_serial_keys else None,
+          date_mode)
+   hit = _LG_CACHE.get(key)
+   if hit is None:
+      if len(_LG_CACHE) > 20:
+         _LG_CACHE.clear()
+      hit = _LG_CACHE[key] = _lead_group_analysis(
+          db, definition, d1, d2, serial_keys, exclude_serial_keys, date_mode)
+   return hit
 
-   Returns [{"name", "avg_hours", "cut_hours", "queue_hours",
-             "efficiency", "n", "overlap",
-             "parts": [{"part_key", "from", "to", "from_label", "to_label",
-                        same figures..., "problem"}]}]
-   in the set's own order.  `problem` says why a part's stretch gave
-   nothing (no route, operation not on it)."""
+
+def _lead_group_analysis(db, definition, d1, d2, serial_keys=None,
+                         exclude_serial_keys=None, date_mode="ops"):
+   """The named operation groups of one saved set, in its own order:
+
+   [{"name", "color", figures, "serials": [(serial key, lead, op time,
+                                            part key)],
+     "subs":  [{"name", figures, "parts": [part rows]}],   (named sub groups)
+     "parts": [{"part_key", "sub", "first", "last", "ref", "n_ops",
+                "runs", figures, "problem", "serials": [(key, lead, op)]}],
+     "names": {serial key: serial as written}}]
+
+   figures = avg_hours, cut_hours (operation time), queue_hours,
+   efficiency, n, overlap.  `ref` is the operation the part's stretch is
+   measured from; `problem` says why a part gave nothing."""
+   d = lt_groups_normalize(db, definition)
+   sub_of = {p["part_key"]: p["sub"] for p in d["parts"]}
+   order = {p["part_key"]: i for i, p in enumerate(d["parts"])}
+   route_cache, entry_cache = {}, {}
    out = []
-   entry_cache, route_cache = {}, {}
-   for g in (definition or {}).get("groups") or []:
-      pooled, parts = [], []
-      for rg in g.get("ranges") or []:
-         pk = rg.get("part_key")
+   for g in d["groups"]:
+      pooled, parts, names = [], [], {}
+      for pk in sorted(g["ops"], key=lambda k: order.get(k, 1 << 30)):
+         chosen = g["ops"][pk]
          if pk not in route_cache:
-            route_cache[pk] = db.wf_traveler_for(pk)
+            route_cache[pk] = lt_part_ops(db, pk)
             entry_cache[pk] = lead_entries(db, pk, d1, d2, serial_keys,
                                            exclude_serial_keys, date_mode)
          route = route_cache[pk]
-         lab = {route_step(c): (c.get("label") or str(c["op"])) for c in route}
-         row = {"part_key": pk, "from": rg.get("from"), "to": rg.get("to"),
-                "from_label": lab.get(rg.get("from"), rg.get("from") or ""),
-                "to_label": lab.get(rg.get("to"), rg.get("to") or ""),
-                "problem": ""}
-         vals = lead_range_values(route, entry_cache[pk], rg.get("from"),
-                                  rg.get("to")) if route else None
-         if vals is None:
-            row["problem"] = ("no traveler route" if not route
-                              else "operation not on the route")
-            vals = []
-         kept = [v for v, keep in zip(vals, lead_keep_mask([v[0] for v in vals]))
+         runs, _missing = lt_runs(route, chosen)
+         row = {"part_key": pk, "sub": sub_of.get(pk, ""), "n_ops": len(chosen),
+                "runs": len(runs), "first": "", "last": "", "ref": "", "problem": ""}
+         if runs:
+            row["first"] = route[runs[0][0]]["op"]
+            row["last"] = route[runs[-1][1]]["op"]
+            row["ref"] = route[lt_run_bounds(*runs[0])[0]]["op"]
+         if not route:
+            vals, row["problem"] = [], "no traveler route"
+         else:
+            vals, row["problem"] = lead_group_values(route, entry_cache[pk], chosen)
+         kept = [v for v, keep in zip(vals, lead_keep_mask([v[1] for v in vals]))
                  if keep]
-         pooled.extend(kept)
-         (row["avg_hours"], row["cut_hours"], row["queue_hours"],
-          row["efficiency"], row["n"], row["overlap"]) = _lead_split(kept)
+         for sk, _h, _c in kept:
+            if sk not in names:
+               for r in entry_cache[pk][sk].values():
+                  names[sk] = r.get("serial") or sk
+                  break
+         row["serials"] = [(sk, h, min(c, h)) for sk, h, c in kept]
+         row.update(zip(_LG_KEYS, _lead_split([(h, c) for _sk, h, c in kept])))
+         pooled.extend((sk, h, c, pk) for sk, h, c in kept)
          parts.append(row)
-      lead, cut, queue, eff, n, overlap = _lead_split(pooled)
-      out.append({"name": g.get("name") or "", "avg_hours": lead,
-                  "cut_hours": cut, "queue_hours": queue, "efficiency": eff,
-                  "n": n, "overlap": overlap, "parts": parts})
+      grp = {"name": g["name"], "color": g["color"], "parts": parts, "names": names,
+             "serials": [(sk, h, min(c, h), pk) for sk, h, c, pk in pooled]}
+      grp.update(zip(_LG_KEYS, _lead_split([(h, c) for _sk, h, c, _pk in pooled])))
+      subs, by = [], {}
+      for row in parts:
+         if not row["sub"]:
+            continue
+         sb = by.get(row["sub"])
+         if sb is None:
+            sb = by[row["sub"]] = {"name": row["sub"], "parts": []}
+            subs.append(sb)
+         sb["parts"].append(row)
+      for sb in subs:
+         # the rows keep the capped figure; the split needs what was booked
+         raw = {(sk, pk): c for sk, _h, c, pk in pooled}
+         vals = [(h, raw.get((sk, row["part_key"]), c))
+                 for row in sb["parts"] for sk, h, c in row["serials"]]
+         sb.update(zip(_LG_KEYS, _lead_split(vals)))
+      grp["subs"] = subs
+      out.append(grp)
    return out
 
 
@@ -8306,14 +8529,15 @@ def export_leadtime_to_excel(path, part_disp, time_label, data, unit="hours",
            ("Traveler operations (after filtering)", len(data["route"])),
            ("Serials seen", data["n_serials"]),
            ("Total lead time (%s)" % u, conv(data.get("total_lead") or 0.0)),
-           ("  of which cutting (%s)" % u, conv(data.get("total_cut") or 0.0)),
+           ("  of which operation time (%s)" % u, conv(data.get("total_cut") or 0.0)),
            ("  of which queueing (%s)" % u, conv(data.get("total_queue") or 0.0)),
            ("Flow efficiency",
             "%.1f%%" % (data["flow_efficiency"] * 100.0)
             if data.get("flow_efficiency") else ""),
            ("Steps whose bookings overlap", data.get("n_overlap") or 0)]
-   info += [("Lead time", "clock time between completions (X to X); "
-                          "cutting = machine time, labour where there is none"),
+   info += [("Lead time", "clock time between completions (X to X); operation "
+                          "time = machine time, labour where there is none - "
+                          "production bookings only, never rework"),
             ("Shop calendar", "%g shift(s) x %g h, %d day(s) a week"
              % (SHIFTS_PER_DAY, SHIFT_HOURS, WORK_DAYS)),
             ("Created", datetime.datetime.now().strftime("%d.%m.%Y %H:%M"))]
@@ -8329,7 +8553,7 @@ def export_leadtime_to_excel(path, part_disp, time_label, data, unit="hours",
        # 2.1.3: one operation per row - its lead time runs from the operation
        # on the row above, so a FROM column only repeated that row.
        head = ["OP", "DESCRIPTION",
-               "AVG LEAD TIME (%s)" % u, "CUTTING (%s)" % u, "QUEUEING (%s)" % u,
+               "AVG LEAD TIME (%s)" % u, "OPERATION TIME (%s)" % u, "QUEUE (%s)" % u,
                "FLOW EFFICIENCY (%)", "SERIALS"]
        for i, h in enumerate(head, start=1):
            ws2.cell(row=1, column=i, value=h)
@@ -8349,33 +8573,34 @@ def export_leadtime_to_excel(path, part_disp, time_label, data, unit="hours",
        ws3 = wb.create_sheet("OP GROUPS")
        ws3["A1"] = "Operation groups - %s" % (group_set or "")
        ws3["A1"].font = st["Font"](bold=True, size=12)
-       head = ["GROUP", "PART", "FROM OP", "TO OP", "AVG LEAD TIME (%s)" % u,
-               "CUTTING (%s)" % u, "QUEUEING (%s)" % u, "FLOW EFFICIENCY (%)",
-               "SERIALS"]
+       head = ["GROUP", "SUB GROUP", "PART", "FIRST OP", "LAST OP", "MEASURED FROM",
+               "AVG LEAD TIME (%s)" % u, "OPERATION TIME (%s)" % u, "QUEUE (%s)" % u,
+               "FLOW EFFICIENCY (%)", "SERIALS"]
        for i, h in enumerate(head, start=1):
            ws3.cell(row=3, column=i, value=h)
        _xl_head(ws3, 3, len(head), st)
-       rr = 4
+       rr = [4]
 
-       def line(vals, bold):
+       def line(lead, d, bold, last=None):
+           vals = lead + [conv(d["avg_hours"]), conv(d["cut_hours"]), conv(d["queue_hours"]),
+                          round(d["efficiency"] * 100.0, 1)
+                          if d["efficiency"] is not None else None,
+                          d["n"] if last is None else last]
            for ci, v in enumerate(vals, start=1):
-               c = ws3.cell(row=rr, column=ci, value=v)
+               c = ws3.cell(row=rr[0], column=ci, value=v)
                c.border = st["box"]
                if bold:
                    c.font = st["Font"](bold=True)
+           rr[0] += 1
        for g in groups:
-           line([g["name"], "ALL PARTS", "", "", conv(g["avg_hours"]),
-                 conv(g["cut_hours"]), conv(g["queue_hours"]),
-                 round(g["efficiency"] * 100.0, 1) if g["efficiency"] is not None else None,
-                 g["n"]], True)
-           rr += 1
+           line([g["name"], "ALL", "ALL PARTS", "", "", ""], g, True)
+           for sb in g.get("subs") or []:
+               line([g["name"], sb["name"], "%d part(s)" % len(sb["parts"]), "", "", ""],
+                    sb, True)
            for p in g["parts"]:
-               line([g["name"], p.get("part") or p["part_key"], p["from_label"],
-                     p["to_label"], conv(p["avg_hours"]), conv(p["cut_hours"]),
-                     conv(p["queue_hours"]),
-                     round(p["efficiency"] * 100.0, 1) if p["efficiency"] is not None else None,
-                     p["n"] if not p["problem"] else p["problem"]], False)
-               rr += 1
+               line([g["name"], p.get("sub") or "", p.get("part") or p["part_key"],
+                     p["first"], p["last"], p["ref"]], p, False,
+                     p["problem"] or None)
        _xl_autosize(ws3)
    wb.save(path)
 
@@ -9786,11 +10011,18 @@ def lead_keep_mask(values):
 
 
 def lead_cut_hours(rec):
-   """The work content of an operation: its machine time, or - for an
-   operation that has none (hand work, inspection) - its labour."""
+   """The OPERATION TIME of an operation: its machine time, or - for an
+   operation that has none (hand work, inspection) - its labour.
+
+   2.2.0: PRODUCTION bookings only - a rework's hours are never operation
+   time.  A record built by hand without the production-only fields (a
+   test, an older caller) is read from its totals."""
    if not rec:
       return 0.0
-   return (rec.get("machine_hour") or 0.0) or (rec.get("labour_hour") or 0.0)
+   m = rec.get("machine_ops")
+   if m is None:
+      return (rec.get("machine_hour") or 0.0) or (rec.get("labour_hour") or 0.0)
+   return m or (rec.get("labour_ops") or 0.0)
 
 
 _ROTA_BILGI = {}

@@ -4,7 +4,8 @@
 What used to be the LEAD TIME / QUEUE / FLOW EFFICIENCY module of the
 WATERFALL page, on a page of its own.  The figures are worked out exactly
 as before (wip_core.lead_time_analysis: completion to completion in clock
-time, cutting = machine time or - where there is none - labour).
+time; OPERATION TIME = machine time or - where there is none - labour,
+production bookings only, never a rework's hours).
 
 Four modules, each switched on and off in the MODULES row:
 
@@ -13,7 +14,7 @@ Four modules, each switched on and off in the MODULES row:
                       one or several parts; the group's own average and
                       each part's beside it.  The sets are saved for
                       everybody (wip_core.lt_groups_*).
-    ROUTE PROFILE     a column per operation, cutting under queue - where
+    ROUTE PROFILE     a column per operation, operation time under queue - where
                       the time goes along the route.  Click a column (or a
                       row of STEPS) to look at that one step.
     SERIALS           a column per serial, longest first, against the
@@ -28,16 +29,20 @@ import math
 import re
 import traceback
 
-from PySide6.QtCore import Qt, QTimer, QRectF, QPointF
+from PySide6.QtCore import Qt, QTimer, QRect, QRectF, QPointF, QSize
 from PySide6.QtGui import QColor, QPainter, QPen, QFont, QFontMetrics, QCursor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QFileDialog,
                                QComboBox, QLineEdit, QDialog, QScrollArea, QFrame,
-                               QToolTip, QSizePolicy)
+                               QToolTip, QSizePolicy, QListWidget, QListWidgetItem,
+                               QAbstractItemView, QStyledItemDelegate, QStyle, QPushButton,
+                               QLabel, QInputDialog)
 
 from wip_core import (ALL, export_leadtime_to_excel, format_wf_hours, lead_time_analysis,
                       lead_group_analysis, lt_groups_load, lt_groups_save, lt_groups_delete,
-                      norm_text, route_step, time_mode_to_date_range, save_prefs)
-from qt_widgets import (ctx, ModuleCard, DataTable, FilterBar, Toggle, Seg, FlowLayout,
+                      lt_groups_normalize, lt_part_ops, lt_runs, lt_run_bounds,
+                      lead_group_values, lead_entries, lead_keep_mask, LT_GROUP_COLORS,
+                      norm_text, time_mode_to_date_range, save_prefs)
+from qt_widgets import (ctx, ModuleCard, Card, Splitter, DataTable, FilterBar, Toggle, Seg, FlowLayout,
                         label, button, hbox, autofit_columns, KpiInline, ModuleGrid, page_layout,
                         page_head, export_button, ZoomControl, serial_menu)
 from qt_theme import FONT
@@ -77,10 +82,10 @@ def eff_text(eff, overlap=False):
 
 
 # =====================================================================
-#  A COLUMN CHART: cutting under queue, an average line
+#  A COLUMN CHART: operation time under queue, an average line
 # =====================================================================
 class ColumnChart(QWidget):
-    """One column per item, cutting (green) with queue (yellow) on top, a
+    """One column per item, operation time (green) with queue (yellow) on top, a
     dashed line at the average.  Painted by hand in the theme's colours;
     it has no scrolling of its own, so the wheel over it moves the page.
 
@@ -272,7 +277,7 @@ def legend_dots():
     s_ = soft()
     lb = label("", muted=True)
     lb.setTextFormat(Qt.RichText)
-    lb.setText('<span style="color:%s;">■</span> cutting &nbsp; '
+    lb.setText('<span style="color:%s;">■</span> operation time &nbsp; '
                '<span style="color:%s;">■</span> queue &nbsp; '
                '<span style="color:%s;">- -</span> average'
                % (s_["cut"], s_["queue"], s_["lead"]))
@@ -282,173 +287,685 @@ def legend_dots():
 # =====================================================================
 #  THE EDITOR OF ONE SET OF OPERATION GROUPS
 # =====================================================================
+def tint(col, a):
+    """`col` laid over the card colour at strength a - a soft fill that
+    stays readable in both themes."""
+    c, base = QColor(col), QColor(ctx.TH["card"])
+    return QColor(int(base.red() + (c.red() - base.red()) * a),
+                  int(base.green() + (c.green() - base.green()) * a),
+                  int(base.blue() + (c.blue() - base.blue()) * a))
+
+
+class OpDelegate(QStyledItemDelegate):
+    """One operation of the part: a bar in its group's colour, the number,
+    the description, and the group's name as a chip on the right."""
+
+    def sizeHint(self, opt, idx):
+        return QSize(100, 30)
+
+    def paint(self, p, opt, idx):
+        th = ctx.TH
+        d = idx.data(Qt.UserRole) or {}
+        r = opt.rect.adjusted(2, 1, -2, -1)
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing)
+        sel = bool(opt.state & QStyle.State_Selected)
+        col = d.get("color")
+        p.setPen(Qt.NoPen)
+        if col:
+            p.setBrush(tint(col, 0.30 if sel else 0.16))
+        else:
+            p.setBrush(QColor(th["sel_row"]) if sel else QColor(th["card"]))
+        p.drawRoundedRect(QRectF(r), 5, 5)
+        if sel:
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor(th["accent"]), 1.4))
+            p.drawRoundedRect(QRectF(r).adjusted(0.7, 0.7, -0.7, -0.7), 5, 5)
+            p.setPen(Qt.NoPen)
+        p.setBrush(QColor(col) if col else QColor(th["border"]))
+        p.drawRoundedRect(QRectF(r.left() + 3, r.top() + 5, 4, r.height() - 10), 2, 2)
+        f = QFont(FONT, 10)
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QColor(th["text"]))
+        p.drawText(QRect(r.left() + 14, r.top(), 60, r.height()), Qt.AlignVCenter | Qt.AlignLeft,
+                   str(d.get("op", "")))
+        chip_w = 0
+        if d.get("group"):
+            fm = QFontMetrics(f)
+            chip_w = min(150, fm.horizontalAdvance(d["group"]) + 18)
+            cr = QRectF(r.right() - chip_w - 6, r.top() + 5, chip_w, r.height() - 10)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(col))
+            p.drawRoundedRect(cr, 8, 8)
+            p.setPen(QColor("#FFFFFF"))
+            f2 = QFont(FONT, 8)
+            f2.setBold(True)
+            p.setFont(f2)
+            p.drawText(cr, Qt.AlignCenter,
+                       QFontMetrics(f2).elidedText(d["group"], Qt.ElideRight, chip_w - 10))
+        f.setBold(False)
+        p.setFont(f)
+        p.setPen(QColor(th["text"] if col else th["muted"]))
+        room = r.width() - 80 - chip_w - 16
+        p.drawText(QRect(r.left() + 78, r.top(), max(10, room), r.height()),
+                   Qt.AlignVCenter | Qt.AlignLeft,
+                   QFontMetrics(f).elidedText(d.get("desc", ""), Qt.ElideRight, max(10, room)))
+        p.restore()
+
+
+class RouteRibbon(QWidget):
+    """The whole route as one strip: a cell per operation in its group's
+    colour - the grouping at a glance, updated as it is edited."""
+
+    def __init__(self):
+        super().__init__()
+        self.cells = []            # [(op, colour or None, group name)]
+        self.setFixedHeight(26)
+        self.setMouseTracking(True)
+
+    def set_cells(self, cells):
+        self.cells = list(cells)
+        self.update()
+
+    def mouseMoveEvent(self, ev):
+        n = len(self.cells)
+        if n:
+            i = max(0, min(n - 1, int(ev.position().x() * n / max(1, self.width()))))
+            op, _c, g = self.cells[i]
+            QToolTip.showText(QCursor.pos(), "op %s%s" % (op, ("  ·  " + g) if g else ""), self)
+
+    def paintEvent(self, ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        n = len(self.cells)
+        if not n:
+            p.end()
+            return
+        w = self.width() / float(n)
+        gap = 2.0 if w > 6 else 0.0
+        for i, (_op, col, _g) in enumerate(self.cells):
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(col) if col else QColor(ctx.TH["border"]))
+            p.drawRoundedRect(QRectF(i * w, 4, max(1.0, w - gap), self.height() - 8), 3, 3)
+        p.end()
+
+
+class GroupCard(QFrame):
+    """One group in the editor: colour, name, the current part's first and
+    last operation, and what it measures.  Operations (or a part) dropped
+    on it - or a click on it - put the selection into the group."""
+
+    def __init__(self, ed, g):
+        super().__init__()
+        self.ed, self.g = ed, g
+        self.setAcceptDrops(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.hot = False
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 8, 8, 8)
+        lay.setSpacing(6)
+        self.sw = QPushButton()
+        self.sw.setFixedSize(22, 22)
+        self.sw.setCursor(Qt.PointingHandCursor)
+        self.sw.setToolTip("Next colour")
+        self.sw.clicked.connect(lambda: ed.next_color(g))
+        self.name = QLineEdit(g["name"])
+        self.name.setPlaceholderText("Group name (TURN, MILL ...)")
+        self.name.textEdited.connect(self._renamed)
+        lay.addWidget(hbox(self.sw, self.name,
+                           button("▲", icon_only=True, tip="Move up",
+                                  slot=lambda: ed.move_group(g, -1)),
+                           button("▼", icon_only=True, tip="Move down",
+                                  slot=lambda: ed.move_group(g, 1)),
+                           button("×", icon_only=True, tip="Delete this group",
+                                  slot=lambda: ed.remove_group(g)), spacing=6))
+        self.first, self.last = QComboBox(), QComboBox()
+        for cb in (self.first, self.last):
+            cb.setMinimumWidth(80)
+            cb.activated.connect(lambda _i: self._range_picked())
+        lay.addWidget(hbox(label("First op", muted=True), self.first,
+                           label("Last op", muted=True), self.last, spacing=6))
+        self.cap = label("", wrap=True)
+        self.cap.setTextFormat(Qt.RichText)
+        lay.addWidget(self.cap)
+        self.others = label("", muted=True, wrap=True)
+        lay.addWidget(self.others)
+        self.paint()
+
+    def _renamed(self, t):
+        self.g["name"] = t
+        self.ed.names_changed()
+
+    def paint(self):
+        th, col = ctx.TH, self.g["color"]
+        self.setStyleSheet(
+            "GroupCard { background: %s; border: 1px solid %s; border-left: 5px solid %s; "
+            "border-radius: 8px; }" % (tint(col, 0.22 if self.hot else 0.08).name(),
+                                       col if self.hot else th["border"], col))
+        self.sw.setStyleSheet("QPushButton { background: %s; border: none; border-radius: 11px; }"
+                              % col)
+
+    def fill(self):
+        """The current part's operations into the two lists, and the
+        captions."""
+        ed, g = self.ed, self.g
+        ops = ed.ops(ed.cur)
+        mine = set(g["ops"].get(ed.cur, [])) if ed.cur else set()
+        idx = [i for i, o in enumerate(ops) if o["op"] in mine]
+        for cb, want in ((self.first, idx[0] if idx else -1),
+                         (self.last, idx[-1] if idx else -1)):
+            cb.blockSignals(True)
+            cb.clear()
+            cb.addItem("—", None)
+            for o in ops:
+                cb.addItem(("%s  ·  %s" % (o["op"], o["desc"])) if o["desc"] else o["op"],
+                           o["op"])
+            cb.setCurrentIndex(want + 1)
+            cb.setEnabled(bool(ops))
+            cb.blockSignals(False)
+        self.cap.setText(ed.caption(g))
+        rest = []
+        for p in ed.parts:
+            pk = p["part_key"]
+            if pk == ed.cur or not g["ops"].get(pk):
+                continue
+            o2 = [o["op"] for o in ed.ops(pk) if o["op"] in set(g["ops"][pk])]
+            if o2:
+                rest.append("%s: %s → %s" % (ed.part_name(pk), o2[0], o2[-1]))
+        self.others.setText("   ·   ".join(rest))
+        self.others.setVisible(bool(rest))
+
+    def _range_picked(self):
+        a, b = self.first.currentIndex() - 1, self.last.currentIndex() - 1
+        if a < 0 and b < 0:
+            self.ed.set_range(self.g, None, None)
+            return
+        if a < 0:
+            a = b
+        if b < 0:
+            b = a
+        if b < a:
+            a, b = b, a
+        self.ed.set_range(self.g, a, b)
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.LeftButton:
+            self.ed.assign(self.g)
+
+    def _ours(self, ev):
+        return ev.source() in (self.ed.olist, self.ed.plist)
+
+    def dragEnterEvent(self, ev):
+        if self._ours(ev):
+            self.hot = True
+            self.paint()
+            ev.acceptProposedAction()
+
+    def dragMoveEvent(self, ev):
+        if self._ours(ev):
+            ev.acceptProposedAction()
+
+    def dragLeaveEvent(self, ev):
+        self.hot = False
+        self.paint()
+
+    def dropEvent(self, ev):
+        self.hot = False
+        self.paint()
+        if ev.source() is self.ed.olist:
+            self.ed.assign(self.g)
+        elif ev.source() is self.ed.plist:
+            # a part dropped on a group: its operations come up and the
+            # first / last operation is picked right here
+            it = self.ed.plist.currentItem()
+            if it is not None:
+                self.ed.set_current(it.data(Qt.UserRole))
+                self.first.setFocus()
+                self.first.showPopup()
+        ev.acceptProposedAction()
+
+
 class GroupEditor(QDialog):
-    """One line per stretch: GROUP name, PART, FROM op, TO op.  Lines with
-    the same group name are one group (several parts, or several stretches
-    of one part)."""
+    """NEW / EDIT of one analysis, the way CUSTOM ANALYSIS is built:
+
+        1  PARTS        add the parts, give them a sub group (STG1 BLISK)
+        2  OPERATIONS   the picked part's whole route, one line each
+        3  GROUPS       named, coloured; select operations and click (or
+                        drop them on) a group - or pick its first and
+                        last operation on the group itself
+
+    Each group is measured from the END of the operation before its first
+    one to the END (X) of its last one, so the groups follow each other
+    with no gap.  The figures beside each group are live (all time)."""
 
     def __init__(self, parent, name, definition, parts):
         super().__init__(parent)
         self.setWindowTitle("Operation groups")
         if ctx.sheet:
             self.setStyleSheet(ctx.sheet)
-        self.resize(900, 520)
-        self.parts = list(parts)                  # [(part key, shown name)]
+        self.resize(1280, 760)
+        self.all_parts = list(parts)               # [(part key, shown name)]
+        self.names = dict(parts)
         self.old_name = name
         self.result_name, self.result_def = None, None
-        self.lines = []
-        self.routes = {}
+        d = lt_groups_normalize(ctx.db, definition or {})
+        self.parts = d["parts"]                    # [{"part_key", "sub"}]
+        self.groups = d["groups"]                  # [{"name", "color", "ops": {pk: [op]}}]
+        self.cur = self.parts[0]["part_key"] if self.parts else None
+        self._ops, self._ents = {}, {}
+        self.cards = []
 
         lay = QVBoxLayout(self)
         lay.setSpacing(10)
         self.name_ed = QLineEdit(name or "")
         self.name_ed.setPlaceholderText("e.g. STG1 BLISK")
         self.name_ed.setMinimumWidth(280)
-        lay.addWidget(hbox(label("Analysis name", muted=True), self.name_ed, None))
-        lay.addWidget(label("One line per stretch of a route.  Lines with the same group name "
-                            "are shown together - the group's lead time is the average over "
-                            "every serial of its parts.  The stretch runs from the completion "
-                            "of FROM to the completion (X) of TO.", muted=True, wrap=True))
-        head = QHBoxLayout()
-        head.setContentsMargins(4, 0, 4, 0)
-        head.setSpacing(8)
-        for txt, st in (("GROUP", 2), ("PART", 3), ("FROM OP", 3), ("TO OP", 3)):
-            head.addWidget(label(txt, section=True), st)
-        head.addSpacing(40)
-        lay.addLayout(head)
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.NoFrame)
-        self.host = QWidget()
-        self.host_lay = QVBoxLayout(self.host)
-        self.host_lay.setContentsMargins(4, 0, 4, 0)
-        self.host_lay.setSpacing(6)
-        self.host_lay.setAlignment(Qt.AlignTop)
-        self.scroll.setWidget(self.host)
-        self.scroll.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget "
-                                  "{ background: transparent; }")
-        lay.addWidget(self.scroll, 1)
+        tl = QVBoxLayout()
+        tl.setSpacing(2)
+        tl.addWidget(label("Edit analysis" if name else "New analysis", obj="PageTitle"))
+        tl.addWidget(label("Add the parts, select their operations, put them into groups",
+                           obj="PageSub"))
+        top = QHBoxLayout()
+        top.setSpacing(10)
+        top.addLayout(tl)
+        top.addStretch(1)
+        top.addWidget(label("Name", muted=True))
+        top.addWidget(self.name_ed)
+        top.addWidget(button("Cancel", slot=self.reject))
+        top.addWidget(button("Save", primary=True, slot=self.save))
+        lay.addLayout(top)
+
+        sp = Splitter(Qt.Horizontal)
+        sp.setChildrenCollapsible(False)
+        sp.setHandleWidth(10)
+        lay.addWidget(sp, 1)
+
+        # ---- 1  parts ----
+        c1 = Card()
+        c1.add(hbox(self.badge(1), label("Parts", obj="CardTitle"), None, spacing=8))
+        self.plist = QListWidget()
+        self.plist.setDragEnabled(True)
+        self.plist.setDragDropMode(QAbstractItemView.DragOnly)
+        self.plist.setMaximumHeight(190)
+        self.plist.currentItemChanged.connect(
+            lambda it, _o: self.set_current(it.data(Qt.UserRole)) if it is not None else None)
+        c1.add(self.plist)
+        c1.add(hbox(button("Sub group…", tip="A name the parts are shown together under "
+                                             "(STG1 BLISK ...)", slot=self.set_sub),
+                    button("Remove", danger=True, slot=self.remove_part), None, spacing=6))
+        c1.add(label("Add a part", muted=True))
+        self.find = QLineEdit()
+        self.find.setPlaceholderText("Find a part to add")
+        self.find.textChanged.connect(self.fill_avail)
+        self.find.returnPressed.connect(self.add_part)
+        c1.add(self.find)
+        self.avail = QListWidget()
+        self.avail.itemDoubleClicked.connect(lambda _i: self.add_part())
+        c1.add(self.avail, 1)
+        c1.add(label("Double-click adds the part; its operations open at once.", muted=True,
+                     wrap=True))
+        c1.setMinimumWidth(300)
+        sp.addWidget(c1)
+
+        # ---- 2  operations ----
+        c2 = Card()
+        self.ops_title = label("Operations", obj="CardTitle")
+        c2.add(hbox(self.badge(2), self.ops_title, None,
+                    button("Select all", slot=lambda: self.olist.selectAll()),
+                    button("Out of its group", tip="Take the selected operations out of "
+                                                   "their group", slot=lambda: self.assign(None)),
+                    spacing=8))
+        self.ribbon = RouteRibbon()
+        c2.add(self.ribbon)
+        c2.add(label("Click an operation, Shift + click for a stretch, Ctrl + click to add. "
+                     "Then click a group on the right - or drag the selection onto it.",
+                     muted=True, wrap=True))
+        self.olist = QListWidget()
+        self.olist.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.olist.setDragEnabled(True)
+        self.olist.setDragDropMode(QAbstractItemView.DragOnly)
+        self.olist.setItemDelegate(OpDelegate(self.olist))
+        self.olist.setSpacing(1)
+        self.olist.setMouseTracking(True)
+        c2.add(self.olist, 1)
+        c2.setMinimumWidth(400)
+        sp.addWidget(c2)
+
+        # ---- 3  groups ----
+        c3 = Card()
+        c3.add(hbox(self.badge(3), label("Groups", obj="CardTitle"), None,
+                    button("+ Add group", primary=True, slot=lambda: self.add_group()),
+                    spacing=8))
+        self.gscroll = QScrollArea()
+        self.gscroll.setWidgetResizable(True)
+        self.gscroll.setFrameShape(QFrame.NoFrame)
+        self.ghost = QWidget()
+        self.glay = QVBoxLayout(self.ghost)
+        self.glay.setContentsMargins(0, 0, 4, 0)
+        self.glay.setSpacing(8)
+        self.glay.setAlignment(Qt.AlignTop)
+        self.gscroll.setWidget(self.ghost)
+        self.gscroll.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget "
+                                   "{ background: transparent; }")
+        c3.add(self.gscroll, 1)
         self.prob = label("", wrap=True)
-        lay.addWidget(self.prob)
-        lay.addWidget(hbox(button("+ Add line", slot=lambda: self.add_line()), None,
-                           button("Cancel", slot=self.reject),
-                           button("Save", primary=True, slot=self.save)))
-        for g in (definition or {}).get("groups") or []:
-            for rg in g.get("ranges") or []:
-                self.add_line(g.get("name") or "", rg.get("part_key"), rg.get("from"),
-                              rg.get("to"))
-        if not self.lines:
-            self.add_line()
+        self.prob.setTextFormat(Qt.RichText)
+        c3.add(self.prob)
+        c3.setMinimumWidth(400)
+        sp.addWidget(c3)
+        sp.setStretchFactor(0, 2)
+        sp.setStretchFactor(1, 4)
+        sp.setStretchFactor(2, 4)
 
-    def route(self, pk):
-        if pk not in self.routes:
-            self.routes[pk] = ctx.db.wf_traveler_for(pk) if pk else []
-        return self.routes[pk]
+        th = ctx.TH
+        for lw in (self.plist, self.avail, self.olist):
+            lw.setFrameShape(QFrame.NoFrame)
+            lw.setStyleSheet(
+                "QListWidget { background: transparent; outline: none; } "
+                + ("" if lw is self.olist else
+                   "QListWidget::item { padding: 5px 8px; border-radius: 5px; color: %s; } "
+                   "QListWidget::item:selected { background: %s; color: %s; } "
+                   "QListWidget::item:hover { background: %s; }"
+                   % (th["text"], th["accent"], "#FFFFFF", th["sel_row"])))
+        if not self.groups:
+            self.add_group(quiet=True)
+        self.fill_parts()
+        self.fill_avail()
+        self.rebuild_cards()
+        self.fill_ops()
 
-    def group_names(self):
-        out = []
-        for ln in self.lines:
-            t = ln["grp"].currentText().strip()
-            if t and t not in out:
-                out.append(t)
-        return out
+    # ---- small things ----
+    @staticmethod
+    def badge(n):
+        b = QLabel(str(n))
+        b.setFixedSize(22, 22)
+        b.setAlignment(Qt.AlignCenter)
+        b.setStyleSheet("background: %s; color: #FFFFFF; border-radius: 11px; font-weight: 700;"
+                        % ctx.TH["accent"])
+        return b
 
-    def add_line(self, grp=None, pk=None, a=None, b=None):
-        row = QWidget()
-        rl = QHBoxLayout(row)
-        rl.setContentsMargins(0, 0, 0, 0)
-        rl.setSpacing(8)
-        g = QComboBox()
-        g.setEditable(True)
-        g.addItems(self.group_names())
-        if grp is None and self.lines:            # a new line continues the last group
-            grp = self.lines[-1]["grp"].currentText()
-            pk = pk or None
-        g.setEditText(grp or "")
-        p = QComboBox()
-        p.setEditable(True)                       # type to find a part
-        p.setInsertPolicy(QComboBox.NoInsert)
-        for key, disp in self.parts:
-            p.addItem(disp, key)
-        fa, fb = QComboBox(), QComboBox()
-        for cb, st in ((g, 2), (p, 3), (fa, 3), (fb, 3)):
-            cb.setMinimumWidth(90)
-            rl.addWidget(cb, st)
-        ln = {"row": row, "grp": g, "part": p, "from": fa, "to": fb}
-        rm = button("×", icon_only=True, tip="Remove this line",
-                    slot=lambda: self.remove_line(ln))
-        rl.addWidget(rm)
-        self.lines.append(ln)
-        self.host_lay.addWidget(row)
-        i = p.findData(pk) if pk else -1
-        if pk and i < 0:                          # a part that lost its route
-            p.addItem("%s  (no route)" % pk, pk)
-            i = p.count() - 1
-        p.setCurrentIndex(i if i >= 0 else (0 if p.count() else -1))
-        self.fill_ops(ln, a, b)
-        p.currentIndexChanged.connect(lambda _i: self.fill_ops(ln))
-        return ln
+    def part_name(self, pk):
+        return self.names.get(pk, pk)
 
-    def remove_line(self, ln):
-        if ln in self.lines:
-            self.lines.remove(ln)
-            ln["row"].hide()
-            ln["row"].deleteLater()
+    def ops(self, pk):
+        if not pk:
+            return []
+        if pk not in self._ops:
+            self._ops[pk] = lt_part_ops(ctx.db, pk)
+        return self._ops[pk]
 
-    def fill_ops(self, ln, a=None, b=None):
-        pk = ln["part"].currentData()
-        route = self.route(pk)
-        for cb, want, last in ((ln["from"], a, False), (ln["to"], b, True)):
-            cb.blockSignals(True)
-            cb.clear()
-            for c in route:
-                txt = str(c.get("label") or c["op"])
-                if c.get("desc"):
-                    txt += "  ·  %s" % c["desc"]
-                cb.addItem(txt, route_step(c))
-            i = cb.findData(want) if want else -1
-            if i < 0 and cb.count():
-                i = cb.count() - 1 if last else 0
-            cb.setCurrentIndex(i)
-            cb.blockSignals(False)
+    def entries(self, pk):
+        if pk not in self._ents:
+            try:
+                self._ents[pk] = lead_entries(ctx.db, pk, None, None)
+            except Exception:
+                self._ents[pk] = {}
+        return self._ents[pk]
 
+    def group_of(self, pk, op):
+        for g in self.groups:
+            if op in g["ops"].get(pk, ()):
+                return g
+        return None
+
+    # ---- 1  parts ----
+    def fill_parts(self):
+        self.plist.blockSignals(True)
+        self.plist.clear()
+        for p in self.parts:
+            pk = p["part_key"]
+            n = sum(len(g["ops"].get(pk, ())) for g in self.groups)
+            txt = self.part_name(pk)
+            if p["sub"]:
+                txt += "    ·  %s" % p["sub"]
+            it = QListWidgetItem("%s    ·  %d op%s" % (txt, n, "" if n == 1 else "s"))
+            it.setToolTip("%s - %d of its operations are in a group.\nDrag it onto a group "
+                          "to pick that group's first and last operation."
+                          % (self.part_name(pk), n))
+            it.setData(Qt.UserRole, pk)
+            self.plist.addItem(it)
+            if pk == self.cur:
+                self.plist.setCurrentItem(it)
+        self.plist.blockSignals(False)
+
+    def fill_avail(self):
+        have = {p["part_key"] for p in self.parts}
+        q = self.find.text().strip().upper()
+        self.avail.clear()
+        for pk, disp in self.all_parts:
+            if pk in have or (q and q not in disp.upper() and q not in str(pk).upper()):
+                continue
+            it = QListWidgetItem(disp)
+            it.setData(Qt.UserRole, pk)
+            self.avail.addItem(it)
+        if self.avail.count():
+            self.avail.setCurrentRow(0)
+
+    def add_part(self):
+        it = self.avail.currentItem()
+        if it is None:
+            return
+        pk = it.data(Qt.UserRole)
+        self.parts.append({"part_key": pk, "sub": ""})
+        self.cur = pk
+        self.find.clear()
+        self.fill_avail()
+        self.refresh_all()
+
+    def remove_part(self):
+        if not self.cur:
+            return
+        pk = self.cur
+        self.parts = [p for p in self.parts if p["part_key"] != pk]
+        for g in self.groups:
+            g["ops"].pop(pk, None)
+        self.cur = self.parts[0]["part_key"] if self.parts else None
+        self.fill_avail()
+        self.refresh_all()
+
+    def set_sub(self):
+        if not self.cur:
+            return
+        p = next(p for p in self.parts if p["part_key"] == self.cur)
+        subs = sorted({q["sub"] for q in self.parts if q["sub"]})
+        v, ok = QInputDialog.getItem(
+            self, "Sub group", "Sub group of %s  (empty = none).\nParts with the same sub "
+            "group are shown together under each group." % self.part_name(self.cur),
+            [p["sub"]] + [s for s in subs if s != p["sub"]], 0, True)
+        if ok:
+            p["sub"] = v.strip()
+            self.fill_parts()
+
+    def set_current(self, pk):
+        if pk and pk != self.cur:
+            self.cur = pk
+            self.refresh_all()
+
+    # ---- 2  operations ----
+    def fill_ops(self):
+        keep = {it.data(Qt.UserRole)["op"] for it in self.olist.selectedItems()}
+        top = self.olist.verticalScrollBar().value()
+        self.olist.clear()
+        ops = self.ops(self.cur)
+        cells = []
+        for i, o in enumerate(ops):
+            g = self.group_of(self.cur, o["op"])
+            d = {"op": o["op"], "desc": o["desc"], "color": g["color"] if g else None,
+                 "group": (g["name"] or "?") if g else ""}
+            it = QListWidgetItem()
+            it.setData(Qt.UserRole, d)
+            seqs = ("  ·  sequences: %s" % ", ".join(o["steps"])) if len(o["steps"]) > 1 else ""
+            it.setToolTip("op %s  %s%s\nmeasured from the end of op %s"
+                          % (o["op"], o["desc"], seqs, ops[i - 1]["op"] if i else o["op"]))
+            self.olist.addItem(it)
+            if o["op"] in keep:
+                it.setSelected(True)
+            cells.append((o["op"], d["color"], d["group"]))
+        self.olist.verticalScrollBar().setValue(top)
+        self.ribbon.set_cells(cells)
+        if self.cur:
+            self.ops_title.setText("Operations · %s" % self.part_name(self.cur))
+        else:
+            self.ops_title.setText("Operations · add a part first")
+
+    def selected_ops(self):
+        return [it.data(Qt.UserRole)["op"] for it in self.olist.selectedItems()]
+
+    def _put(self, g, chosen):
+        """`chosen` operations of the current part into group g (None =
+        out of every group), kept in route order."""
+        pk = self.cur
+        chosen = set(chosen)
+        for other in self.groups:
+            left = [o for o in other["ops"].get(pk, []) if o not in chosen]
+            if left:
+                other["ops"][pk] = left
+            else:
+                other["ops"].pop(pk, None)
+        if g is not None and chosen:
+            have = set(g["ops"].get(pk, [])) | chosen
+            g["ops"][pk] = [o["op"] for o in self.ops(pk) if o["op"] in have]
+
+    def assign(self, g):
+        sel = self.selected_ops()
+        if not self.cur or not sel:
+            if g is not None:
+                self.prob.setText("Select operations in the middle list first.")
+            return
+        self._put(g, sel)
+        self.olist.clearSelection()
+        self.refresh_all()
+
+    def set_range(self, g, a, b):
+        """The group is exactly the operations a..b of the current part."""
+        if not self.cur:
+            return
+        ops = self.ops(self.cur)
+        self._put(None, g["ops"].get(self.cur, []))
+        if a is not None:
+            self._put(g, [o["op"] for o in ops[a:b + 1]])
+        self.refresh_all()
+
+    # ---- 3  groups ----
+    def add_group(self, quiet=False):
+        used = {g["color"] for g in self.groups}
+        col = next((c for c in LT_GROUP_COLORS if c not in used),
+                   LT_GROUP_COLORS[len(self.groups) % len(LT_GROUP_COLORS)])
+        self.groups.append({"name": "", "color": col, "ops": {}})
+        if not quiet:
+            self.rebuild_cards()
+            self.cards[-1].name.setFocus()
+
+    def remove_group(self, g):
+        if any(g["ops"].values()) and QMessageBox.question(
+                self, "Operation groups", "Delete the group '%s'?" % (g["name"] or "?")) \
+                != QMessageBox.Yes:
+            return
+        self.groups = [x for x in self.groups if x is not g]
+        self.refresh_all(cards=True)
+
+    def move_group(self, g, step):
+        i = next(i for i, x in enumerate(self.groups) if x is g)
+        j = i + step
+        if 0 <= j < len(self.groups):
+            self.groups[i], self.groups[j] = self.groups[j], self.groups[i]
+            self.rebuild_cards()
+
+    def next_color(self, g):
+        i = LT_GROUP_COLORS.index(g["color"]) if g["color"] in LT_GROUP_COLORS else -1
+        g["color"] = LT_GROUP_COLORS[(i + 1) % len(LT_GROUP_COLORS)]
+        self.refresh_all()
+
+    def names_changed(self):
+        self.fill_ops()
+
+    def rebuild_cards(self):
+        while self.glay.count():
+            w = self.glay.takeAt(0).widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        self.cards = []
+        for g in self.groups:
+            c = GroupCard(self, g)
+            self.cards.append(c)
+            self.glay.addWidget(c)
+            c.fill()
+
+    def caption(self, g):
+        """What the group measures on the current part, with its live
+        figure (all time, no filters)."""
+        th = ctx.TH
+        if not self.cur:
+            return "<span style='color:%s;'>add a part first</span>" % th["muted"]
+        chosen = g["ops"].get(self.cur, [])
+        if not chosen:
+            return ("<span style='color:%s;'>no operations of this part yet - drop them "
+                    "here</span>" % th["muted"])
+        ops = self.ops(self.cur)
+        runs, _m = lt_runs(ops, chosen)
+        ref = ops[lt_run_bounds(*runs[0])[0]]["op"]
+        txt = "end of op <b>%s</b> → end of op <b>%s</b> · %d op%s" % (
+            ref, ops[runs[-1][1]]["op"], len(chosen), "" if len(chosen) == 1 else "s")
+        if len(runs) > 1:
+            txt += " · %d separate stretches, added up" % len(runs)
+        vals, prob = lead_group_values(ops, self.entries(self.cur), chosen)
+        kept = [v for v, k in zip(vals, lead_keep_mask([v[1] for v in vals])) if k]
+        if kept:
+            avg = sum(v[1] for v in kept) / len(kept)
+            txt += ("<br><span style='color:%s;'><b>%.2f d</b></span> average lead · %d serials"
+                    % (g["color"], avg / 24.0, len(kept)))
+        elif prob:
+            txt += "<br><span style='color:%s;'>%s</span>" % (th["danger"], prob)
+        else:
+            txt += "<br><span style='color:%s;'>no closed serials yet</span>" % th["muted"]
+        return txt
+
+    def refresh_all(self, cards=False):
+        self.prob.setText("")
+        self.fill_parts()
+        self.fill_ops()
+        if cards or len(self.cards) != len(self.groups):
+            self.rebuild_cards()
+        else:
+            for c in self.cards:
+                c.paint()
+                c.fill()
+
+    # ---- save ----
     def save(self):
         name = self.name_ed.text().strip()
+        bad = []
         if not name:
-            self.prob.setText("Give the analysis a name.")
-            return
-        groups, order, bad = {}, [], []
-        for n, ln in enumerate(self.lines, start=1):
-            g = ln["grp"].currentText().strip()
-            pk = ln["part"].currentData()
-            a, b = ln["from"].currentData(), ln["to"].currentData()
-            if not g:
-                bad.append("line %d has no group name" % n)
-                continue
-            if not pk or a is None or b is None:
-                bad.append("line %d (%s): pick a part and its operations" % (n, g))
-                continue
-            if ln["from"].currentIndex() >= ln["to"].currentIndex():
-                bad.append("line %d (%s): TO must come after FROM on the route" % (n, g))
-                continue
-            if g not in groups:
-                groups[g] = []
-                order.append(g)
-            groups[g].append({"part_key": pk, "from": a, "to": b})
+            bad.append("Give the analysis a name.")
+        groups = [g for g in self.groups if any(g["ops"].values())]
+        if not groups:
+            bad.append("Put at least one operation into a group.")
+        seen = set()
+        for g in groups:
+            g["name"] = g["name"].strip()
+            if not g["name"]:
+                bad.append("A group with operations has no name.")
+            elif g["name"].upper() in seen:
+                bad.append("Two groups are called '%s'." % g["name"])
+            seen.add(g["name"].upper())
         if bad:
             self.prob.setText("<span style='color:%s;'>%s</span>"
                               % (ctx.TH["danger"], "<br>".join(bad)))
-            return
-        if not order:
-            self.prob.setText("Add at least one line.")
             return
         if name != self.old_name and name in lt_groups_load(ctx.db):
             if QMessageBox.question(self, "Operation groups",
                                     "'%s' already exists. Replace it?" % name) \
                     != QMessageBox.Yes:
                 return
+        used = {pk for g in groups for pk in g["ops"]}
         self.result_name = name
-        self.result_def = {"groups": [{"name": g, "ranges": groups[g]} for g in order]}
+        self.result_def = {
+            "parts": [dict(p) for p in self.parts if p["part_key"] in used],
+            "groups": [{"name": g["name"], "color": g["color"],
+                        "ops": {pk: list(v) for pk, v in g["ops"].items() if v}}
+                       for g in groups]}
         self.accept()
 
 
@@ -499,7 +1016,7 @@ class Page(QWidget):
 
         # ---- the whole route, in the title row ----
         self.k_lead = KpiInline("LEAD", None, compact=True)
-        self.k_cut = KpiInline("CUTTING", None, compact=True)
+        self.k_cut = KpiInline("OP. TIME", None, compact=True)
         self.k_queue = KpiInline("QUEUE", None, compact=True)
         self.k_eff = KpiInline("FLOW EFF.", None, compact=True)
         self.info_lbl = label("", muted=True)
@@ -558,12 +1075,18 @@ class Page(QWidget):
         self.b_del = button("Delete", danger=True, slot=self.delete_set)
         sf.addWidget(self.b_edit)
         sf.addWidget(self.b_del)
+        self.t_detail = Toggle("Show parts", slot=lambda: self.show_groups(
+            self.last["groups"], self.unit.get(), self.last["set"]))
+        self.t_detail.setToolTip("The parts under each group / sub group, with their "
+                                 "first and last operation.")
+        sf.addWidget(self.t_detail)
         self.gcard.content_lay.addWidget(srow)
         self.gtable = DataTable()
         self.gtable.tiles = True
         self.gtable.fit_width = True
         self.gtable.fit_min = MIN_ROWS
         self.gtable.fit_rows(24)
+        self.gtable.on_row_click = lambda ri, _row: self.pick_group(ri)
         self.gcard.content_lay.addWidget(self.gtable, 1)
         self.gnote = label("", muted=True, wrap=True)
         self.gcard.content_lay.addWidget(self.gnote)
@@ -602,6 +1125,8 @@ class Page(QWidget):
         self.flags = ((self.t_steps, self.steps, self.grid), (self.t_groups, self.gcard, self.grid),
                       (self.t_prof, self.pcard, self.grid2), (self.t_ser, self.scard, self.grid2))
         self.sel_step = None                 # index into data["steps"], None = whole route
+        self.sel_group = None                # (group, sub, part) of the row on the chart
+        self.grow_keys = []                  # the groups table, row by row
         for _t, c, _g in self.flags:
             c.show()
         self.grid.relayout()
@@ -633,7 +1158,39 @@ class Page(QWidget):
         if idx is not None and idx == self.sel_step:
             idx = None                       # a second click lets go
         self.sel_step = idx
+        self.sel_group = None
         self.draw_charts()
+
+    def pick_group(self, ri):
+        """A row of OPERATION GROUPS: its serials go on the chart."""
+        key = self.grow_keys[ri] if 0 <= ri < len(self.grow_keys) else None
+        self.sel_group = None if key == self.sel_group else key
+        if self.sel_group is not None:
+            self.sel_step = None
+        self.draw_charts()
+
+    def group_serials(self):
+        """(title, [(serial key, lead, op time)], names) of the picked row,
+        or None when it is gone."""
+        if self.sel_group is None:
+            return None
+        gname, sub, pk = self.sel_group
+        for g in self.last["groups"] or []:
+            if g["name"] != gname:
+                continue
+            if pk is not None:
+                for p in g["parts"]:
+                    if p["part_key"] == pk:
+                        return ("%s · %s" % (gname, p.get("part") or pk), p["serials"],
+                                g["names"])
+            elif sub is not None:
+                for sb in g["subs"]:
+                    if sb["name"] == sub:
+                        return ("%s · %s" % (gname, sub),
+                                [v for p in sb["parts"] for v in p["serials"]], g["names"])
+            else:
+                return (gname, [(sk, h, c) for sk, h, c, _pk in g["serials"]], g["names"])
+        return None
 
     def _mode_changed(self, v):
         try:
@@ -872,7 +1429,7 @@ class Page(QWidget):
         night = ctx.TH["name"] != "day"
         s_ = soft()
         cols = [("OP", 70), ("DESCRIPTION", 200), ("LEAD TIME (%s)" % unit, 110),
-                ("CUTTING (%s)" % unit, 100), ("QUEUE (%s)" % unit, 110),
+                ("OP. TIME (%s)" % unit, 110), ("QUEUE (%s)" % unit, 110),
                 ("FLOW EFFICIENCY", 120), ("SERIALS", 70)]
         steps = data["steps"]
         avgs = [s["avg_hours"] for s in steps if s["avg_hours"] is not None]
@@ -914,7 +1471,7 @@ class Page(QWidget):
                 k.set("-")
         if data.get("n_overlap"):
             self.note.setText('<span style="color:%s;">* %d step(s) overlap - counted as all '
-                              'cutting</span>' % (ctx.TH["muted"], data["n_overlap"]))
+                              'operation time</span>' % (ctx.TH["muted"], data["n_overlap"]))
             self.note.show()
         else:
             self.note.hide()
@@ -928,21 +1485,27 @@ class Page(QWidget):
         u = "d" if unit == "days" else "h"
         for lb in (self.leg1,):
             s_ = soft()
-            lb.setText('<span style="color:%s;">■</span> cutting &nbsp; '
+            lb.setText('<span style="color:%s;">■</span> operation time &nbsp; '
                        '<span style="color:%s;">■</span> queue &nbsp; '
                        '<span style="color:%s;">- -</span> average'
                        % (s_["cut"], s_["queue"], s_["lead"]))
-        if not data:
+        f = lambda v: format_wf_hours(v, unit)
+        picked = self.group_serials()
+        if picked is None:
+            self.sel_group = None
+        if not data and picked is None:
             self.prof.clear("pick a part")
-            self.serc.clear("pick a part")
+            self.serc.clear("pick a part - or click a row of Operation groups")
             self.scard.title_lbl.setText("Serials")
             self.scard.set_sub("")
             self.b_whole.hide()
+            self.t_fin.hide()
             return
-        steps = data["steps"]
+        steps = data["steps"] if data else []
         if self.sel_step is not None and not (0 <= self.sel_step < len(steps)):
             self.sel_step = None
-        f = lambda v: format_wf_hours(v, unit)
+        if not data:
+            self.prof.clear("pick a part")
 
         # the route, operation by operation
         items = []
@@ -951,17 +1514,27 @@ class Page(QWidget):
                 continue
             items.append({"key": i, "label": s["to_op"], "cut": s["cut_hours"] or 0.0,
                           "queue": s["queue_hours"] or 0.0,
-                          "tip": "%s  %s\nlead %s %s  =  cutting %s + queue %s\n%d serials"
+                          "tip": "%s  %s\nlead %s %s  =  operation time %s + queue %s\n%d serials"
                                  "\nclick: this step's serials"
                                  % (s["to_op"], s["to_desc"] or "", f(s["avg_hours"]), u,
                                     f(s["cut_hours"]), f(s["queue_hours"]), s["n"])})
-        avg = (sum(it["cut"] + it["queue"] for it in items) / len(items)) if items else None
-        self.prof.picked = self.sel_step
-        self.prof.set_data(items, unit, avg, "no closed steps in this selection")
+        if data:
+            avg = (sum(it["cut"] + it["queue"] for it in items) / len(items)) if items else None
+            self.prof.picked = self.sel_step
+            self.prof.set_data(items, unit, avg, "no closed steps in this selection")
 
-        # the serials: the whole route, or the step picked
-        names = data.get("serial_names", {})
-        if self.sel_step is None:
+        # the serials: the whole route, the step picked, or a group's row
+        names = data.get("serial_names", {}) if data else {}
+        if picked is not None:
+            title, vals, names = picked
+            rows = [(sk, h, c, 1) for sk, h, c in vals]
+            title = "Serials · %s" % title
+            extra = "operation group"
+            tip = lambda r: "%s\nlead %s %s  =  operation time %s + queue %s" % (
+                names.get(r[0], r[0]), f(r[1]), u, f(r[2]), f(max(0.0, r[1] - r[2])))
+            self.t_fin.hide()
+            self.b_whole.setVisible(bool(data))
+        elif self.sel_step is None:
             fin = data.get("finished") or set()
             rows = [(sk, v[0], v[1], v[2]) for sk, v in data.get("per_serial", {}).items()]
             only_fin = self.t_fin.isChecked() and any(r[0] in fin for r in rows)
@@ -970,7 +1543,7 @@ class Page(QWidget):
             title = "Serials · whole route"
             n_steps = len([s for s in steps if s["avg_hours"] is not None])
             extra = "finished serials" if only_fin else "all serials (parts on the floor too)"
-            tip = lambda r: "%s\nlead %s %s  =  cutting %s + queue %s\n%d of %d steps measured" % (
+            tip = lambda r: "%s\nlead %s %s  =  operation time %s + queue %s\n%d of %d steps measured" % (
                 names.get(r[0], r[0]), f(r[1]), u, f(r[2]), f(max(0.0, r[1] - r[2])), r[3],
                 n_steps)
             self.t_fin.show()
@@ -980,7 +1553,7 @@ class Page(QWidget):
             rows = [(sk, h, c, 1) for sk, h, c in s.get("serials", [])]
             title = "Serials · op %s" % s["to_op"]
             extra = s["to_desc"] or ""
-            tip = lambda r: "%s\nlead %s %s  =  cutting %s + queue %s" % (
+            tip = lambda r: "%s\nlead %s %s  =  operation time %s + queue %s" % (
                 names.get(r[0], r[0]), f(r[1]), u, f(r[2]), f(max(0.0, r[1] - r[2])))
             self.t_fin.hide()
             self.b_whole.show()
@@ -999,61 +1572,113 @@ class Page(QWidget):
 
     # ---- OPERATION GROUPS ----
     def show_groups(self, groups, unit, name):
+        self.grow_keys = []
         if not groups:
             self.gtable.clear()
-            self.gnote.setText("No analysis yet - press New, name your groups (TURN, MILL ...) "
-                               "and give each part its stretch of the route (130 → 150)."
+            self.gnote.setText("No analysis yet - press New: add the parts, select their "
+                               "operations and put them into groups of your own naming "
+                               "(TURN, MILL ...)."
                                if not name else "This analysis has no groups.")
             self.gnote.show()
             return
-        self.gnote.hide()
         night = ctx.TH["name"] != "day"
         s_ = soft()
         names = dict(self.all_parts())
-        cols = [("GROUP", 110), ("PART", 150), ("FROM → TO", 120),
-                ("LEAD TIME (%s)" % unit, 110), ("CUTTING (%s)" % unit, 100),
-                ("QUEUE (%s)" % unit, 110), ("FLOW EFFICIENCY", 120), ("SERIALS", 70)]
+        detail = self.t_detail.isChecked()
+        # the OPS column only with the parts open - the room goes to the names
+        cols = [("GROUP", 150), ("SUB GROUP / PART" if detail else "SUB GROUP", 190),
+                ("OPS", 90), ("LEAD TIME (%s)" % unit, 100), ("OP. TIME (%s)" % unit, 100),
+                ("QUEUE (%s)" % unit, 100), ("FLOW EFF.", 100), ("SERIALS", 70)]
         avgs = [g["avg_hours"] for g in groups if g["avg_hours"] is not None]
         lo, hi = (min(avgs), max(avgs)) if avgs else (0, 0)
         rows, bg, bold, cbg, cfg, bars, tips = [], [], [], {}, {}, {}, {}
 
-        def line(vals, d, is_group, k):
+        def line(vals, d, kind, k, key, color=None):
             ri = len(rows)
             rows.append(vals)
-            bg.append("sub" if is_group else ("a" if ri % 2 == 0 else "b"))
-            bold.append(is_group)
+            self.grow_keys.append(key)
+            bg.append("sub" if kind == "group" else ("a" if ri % 2 == 0 else "b"))
+            bold.append(kind != "part")
+            if color:
+                cfg[(ri, 0)] = color
             if d["avg_hours"] is not None:
                 cbg[(ri, 3)], cfg[(ri, 3)] = lt_chip(s_["lead"], k, night)
                 cbg[(ri, 4)], cfg[(ri, 4)] = lt_chip(s_["cut"], 0.15, night)
                 cbg[(ri, 5)], cfg[(ri, 5)] = lt_chip(s_["queue"], k, night)
             if d["efficiency"] is not None:
                 bars[(ri, 6)] = (max(0.0, min(1.0, d["efficiency"])), s_["cut"])
+            return ri
 
         def figures(d):
             return [format_wf_hours(d["avg_hours"], unit), format_wf_hours(d["cut_hours"], unit),
                     format_wf_hours(d["queue_hours"], unit),
                     eff_text(d["efficiency"], d.get("overlap")),
                     str(d["n"]) if d["n"] else ""]
+
+        def part_line(g, p):
+            ops = ("%s → %s" % (p["first"], p["last"])) if p["first"] else ""
+            ri = line(["", "      " + p["part"], ops] + figures(p), p, "part", 0.15,
+                      (g["name"], None, p["part_key"]))
+            tip = p["problem"] or ("measured from the end of op %s to the end of op %s"
+                                   "  ·  %d operation(s)%s"
+                                   % (p["ref"], p["last"], p["n_ops"],
+                                      ("  ·  %d separate stretches" % p["runs"])
+                                      if p["runs"] > 1 else ""))
+            if p["problem"]:
+                rows[ri][-1] = "!"
+            tips[(ri, 1)] = tips[(ri, 2)] = tips[(ri, 7)] = tip
+        hidden = 0
         for g in groups:
             k = 0.5
             if g["avg_hours"] is not None and hi > lo:
                 k = (g["avg_hours"] - lo) / float(hi - lo)
             n_parts = len({p["part_key"] for p in g["parts"]})
-            line([g["name"], "%d part%s" % (n_parts, "" if n_parts == 1 else "s"), ""]
-                 + figures(g), g, True, k)
             for p in g["parts"]:
                 p["part"] = names.get(p["part_key"], p["part_key"])
-                vals = ["", p["part"], "%s → %s" % (p["from_label"], p["to_label"])] + figures(p)
-                if p["problem"]:
-                    vals[-1] = "!"
-                    tips[(len(rows), 7)] = p["problem"]
-                    tips[(len(rows), 1)] = p["problem"]
-                line(vals, p, False, 0.15)
+            ri = line(["● " + g["name"], "%d part%s" % (n_parts, "" if n_parts == 1 else "s"), ""]
+                      + figures(g), g, "group", k, (g["name"], None, None), g["color"])
+            bad = [p for p in g["parts"] if p["problem"]]
+            if bad:
+                tips[(ri, 1)] = "\n".join("%s: %s" % (p["part"], p["problem"]) for p in bad)
+                rows[ri][1] += "  !"
+            in_sub = set()
+            for sb in g["subs"]:
+                line(["", "   %s · %d part%s" % (sb["name"], len(sb["parts"]),
+                                                   "" if len(sb["parts"]) == 1 else "s"), ""]
+                     + figures(sb), sb, "sub", 0.3, (g["name"], sb["name"], None))
+                tips[(len(rows) - 1, 1)] = "%s: %s" % (sb["name"], ", ".join(
+                    p["part"] for p in sb["parts"]))
+                for p in sb["parts"]:
+                    in_sub.add(p["part_key"])
+                    if detail:
+                        part_line(g, p)
+                    else:
+                        hidden += 1
+            for p in g["parts"]:
+                if p["part_key"] in in_sub:
+                    continue
+                if detail:
+                    part_line(g, p)
+                else:
+                    hidden += 1
+        if not detail:                       # drop OPS (column 2)
+            cols = cols[:2] + cols[3:]
+            rows = [r[:2] + r[3:] for r in rows]
+            shift = lambda d: {(r, c - 1 if c > 2 else c): v for (r, c), v in d.items()
+                               if c != 2}
+            cbg, cfg, bars, tips = shift(cbg), shift(cfg), shift(bars), shift(tips)
         self.gtable.cell_bar = bars
-        self.gtable.set_data(autofit_columns(cols, rows), rows, bg, bold,
-                             align=["w", "w", "center"] + ["center"] * 5, cell_bg=cbg,
+        self.gtable.set_data(autofit_columns(cols, rows, max_w=320), rows, bg, bold,
+                             align=["w", "w"] + ["center"] * (len(cols) - 2), cell_bg=cbg,
                              cell_fg=cfg)
         self.gtable.cell_tip = tips
+        if hidden and not detail:
+            self.gnote.setText("%d part row%s hidden - switch on Show parts for the detail.  "
+                               "Click a row to see its serials on the chart."
+                               % (hidden, "" if hidden == 1 else "s"))
+            self.gnote.show()
+        else:
+            self.gnote.hide()
 
     # ---------------------------------------------------------------
     def do_export(self):
