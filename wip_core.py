@@ -8779,9 +8779,25 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
    adaylar = {}                      # i -> [(hours, cut hours)]
    rsteps = [route_step(c) for c in route]      # 2.2.0: once, not per serial
    finished, names = set(), {}
+   # THE WHOLE ROUTE, END TO END (2.3.0), per serial - the same rule as
+   # the waterfall's AVG LEAD (WFAnalyzer.whole_route_lead):
+   #     X of the LAST operation  minus  completion of the FIRST
+   # whatever happened in between (a step passed without an X, a far-off
+   # step).  Adding the steps up lost exactly those.  Operation time: the
+   # work of every operation after the first.
+   route_serial = {}                 # serial key -> [lead, operation time, kept]
    for sk, entries in by_serial.items():
        if lead_x_dt(entries.get(rsteps[-1])) is not None:
            finished.add(sk)
+           if len(rsteps) > 1:
+               whole = lead_gap_hours(entries.get(rsteps[0]), entries.get(rsteps[-1]))
+               if whole is not None and whole >= 0:
+                   work = 0.0
+                   for st_ in rsteps[1:]:
+                       rec_ = entries.get(st_)
+                       if rec_ is not None:
+                           work += lead_cut_hours(rec_)
+                   route_serial[sk] = [whole, min(work, whole), True]
        for r in entries.values():
            names[sk] = r.get("serial") or sk
            break
@@ -8860,9 +8876,21 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
            "efficiency": (cut / lead) if (lead and cut is not None) else None,
            "serials": step_serials.get(i, []),
        })
+   # the average leaves the far-off ones out (they stay on the chart)
+   rs_keys = list(route_serial)
+   for sk, keep in zip(rs_keys, lead_keep_mask([route_serial[k][0] for k in rs_keys])):
+       route_serial[sk][2] = keep
+   kept = [v for v in route_serial.values() if v[2]]
+   route_lead = (sum(v[0] for v in kept) / len(kept)) if kept else None
+   route_cut = (sum(v[1] for v in kept) / len(kept)) if kept else None
    return {"route": route, "steps": steps, "date_mode": date_mode,
            "per_serial": per_serial, "serial_names": names,
            "finished": finished,
+           # end to end: first operation's completion -> last operation's X
+           "route_serial": route_serial, "route_lead": route_lead,
+           "route_cut": route_cut, "route_n": len(kept),
+           "route_first": (route[0].get("label") or route[0]["op"]),
+           "route_last": (route[-1].get("label") or route[-1]["op"]),
            "n_serials": len(by_serial), "n_completed_pairs": sum(step_n.values()),
            "total_lead": tot_lead, "total_cut": tot_cut,
            "total_queue": max(0.0, tot_lead - tot_cut),
@@ -9123,7 +9151,15 @@ def export_leadtime_to_excel(path, part_disp, time_label, data, unit="hours",
                                         "By op date - operation records in the range")),
            ("Traveler operations (after filtering)", len(data["route"])),
            ("Serials seen", data["n_serials"]),
-           ("Total lead time (%s)" % u, conv(data.get("total_lead") or 0.0)),
+           ("Whole route lead time (%s): first op %s completed -> last op %s X"
+            % (u, data.get("route_first", ""), data.get("route_last", "")),
+            conv(data.get("route_lead"))),
+           ("  serials finished (in the average)", data.get("route_n") or 0),
+           ("  of which operation time (%s)" % u, conv(data.get("route_cut"))),
+           ("  of which queueing (%s)" % u,
+            conv(max(0.0, data["route_lead"] - (data.get("route_cut") or 0.0)))
+            if data.get("route_lead") is not None else None),
+           ("Sum of the steps (%s)" % u, conv(data.get("total_lead") or 0.0)),
            ("  of which operation time (%s)" % u, conv(data.get("total_cut") or 0.0)),
            ("  of which queueing (%s)" % u, conv(data.get("total_queue") or 0.0)),
            ("Flow efficiency",

@@ -18,7 +18,9 @@ Four modules, each switched on and off in the MODULES row:
                       the time goes along the route.  Click a column (or a
                       row of STEPS) to look at that one step.
     SERIALS           a column per serial, longest first, against the
-                      average: the whole route, or the step picked.
+                      average: the whole route END TO END (the first
+                      operation's completion to the last one's X - the
+                      same figure as LEAD at the top), or the step picked.
 
 The date range picks the data one of three ways: the operation records
 inside it, the serials seen inside it (all their records), or the serials
@@ -1109,11 +1111,7 @@ class Page(QWidget):
         self.b_whole = button("Whole route", tip="Back from the picked step to the whole route",
                               slot=lambda: self.pick_step(None))
         self.b_whole.hide()
-        self.t_fin = Toggle("Finished only", checked=True, slot=self.draw_charts)
-        self.t_fin.setToolTip("Only the serials whose last operation is closed (X) - a part "
-                              "still on the floor has only part of its lead time.")
         self.scard.add_extra(self.b_whole)
-        self.scard.add_extra(self.t_fin)
         self.serc = ColumnChart(labels=False)
         self.serc.on_menu = lambda key, gpos: serial_menu(
             (self.last["data"] or {}).get("serial_names", {}).get(key, key), gpos)
@@ -1460,13 +1458,31 @@ class Page(QWidget):
                             ["a" if i % 2 == 0 else "b" for i in range(len(rows))],
                             align=["w", "w"] + ["center"] * 5, cell_bg=cbg, cell_fg=cfg)
         self.table.cell_tip = {(ri, 1): rows[ri][1] for ri in range(len(rows))}
+        # THE WHOLE ROUTE, END TO END: the first operation's completion to
+        # the last operation's X, over the serials that finished.  Only
+        # when none has finished yet: the steps added up.
         eff = data.get("flow_efficiency")
-        if eff is not None:
+        whole = data.get("route_lead")
+        if whole is not None:
+            work = data.get("route_cut") or 0.0
+            self.k_lead.set("%s %s" % (format_wf_hours(whole, unit), u))
+            self.k_cut.set("%s %s" % (format_wf_hours(work, unit), u))
+            self.k_queue.set("%s %s" % (format_wf_hours(max(0.0, whole - work), unit), u))
+            self.k_eff.set(("%.1f%%" % (work / whole * 100.0)) if whole else "-")
+            tip = ("Whole route: op %s completed → op %s closed (X)\n"
+                   "average of %d finished serial(s)"
+                   % (data.get("route_first"), data.get("route_last"), data.get("route_n")))
+        elif eff is not None:
             self.k_lead.set("%s %s" % (format_wf_hours(data["total_lead"], unit), u))
             self.k_cut.set("%s %s" % (format_wf_hours(data["total_cut"], unit), u))
             self.k_queue.set("%s %s" % (format_wf_hours(data["total_queue"], unit), u))
             self.k_eff.set("%.1f%%" % (eff * 100.0))
+            tip = "No serial has finished the route in this selection:\nthe steps added up"
         else:
+            tip = ""
+        for k in (self.k_lead, self.k_cut, self.k_queue, self.k_eff):
+            k.setToolTip(tip)
+        if whole is None and eff is None:
             for k in (self.k_lead, self.k_cut, self.k_queue, self.k_eff):
                 k.set("-")
         if data.get("n_overlap"):
@@ -1499,7 +1515,6 @@ class Page(QWidget):
             self.scard.title_lbl.setText("Serials")
             self.scard.set_sub("")
             self.b_whole.hide()
-            self.t_fin.hide()
             return
         steps = data["steps"] if data else []
         if self.sel_step is not None and not (0 <= self.sel_step < len(steps)):
@@ -1532,21 +1547,22 @@ class Page(QWidget):
             extra = "operation group"
             tip = lambda r: "%s\nlead %s %s  =  operation time %s + queue %s" % (
                 names.get(r[0], r[0]), f(r[1]), u, f(r[2]), f(max(0.0, r[1] - r[2])))
-            self.t_fin.hide()
+            whole_avg = None
             self.b_whole.setVisible(bool(data))
         elif self.sel_step is None:
-            fin = data.get("finished") or set()
-            rows = [(sk, v[0], v[1], v[2]) for sk, v in data.get("per_serial", {}).items()]
-            only_fin = self.t_fin.isChecked() and any(r[0] in fin for r in rows)
-            if only_fin:
-                rows = [r for r in rows if r[0] in fin]
+            # end to end: first operation completed -> last operation's X
+            rs = data.get("route_serial") or {}
+            rows = [(sk, v[0], v[1], v[2]) for sk, v in rs.items()]
+            far = sum(1 for r in rows if not r[3])
             title = "Serials · whole route"
-            n_steps = len([s for s in steps if s["avg_hours"] is not None])
-            extra = "finished serials" if only_fin else "all serials (parts on the floor too)"
-            tip = lambda r: "%s\nlead %s %s  =  operation time %s + queue %s\n%d of %d steps measured" % (
-                names.get(r[0], r[0]), f(r[1]), u, f(r[2]), f(max(0.0, r[1] - r[2])), r[3],
-                n_steps)
-            self.t_fin.show()
+            extra = "op %s completed → op %s closed (X) · finished serials%s" % (
+                data.get("route_first"), data.get("route_last"),
+                (" · %d far-off, not in the average" % far) if far else "")
+            tip = lambda r: "%s\nop %s completed → op %s closed:  %s %s\n=  operation time %s + queue %s%s" % (
+                names.get(r[0], r[0]), data.get("route_first"), data.get("route_last"),
+                f(r[1]), u, f(r[2]), f(max(0.0, r[1] - r[2])),
+                "" if r[3] else "\nfar-off: not in the average")
+            whole_avg = data.get("route_lead")
             self.b_whole.hide()
         else:
             s = steps[self.sel_step]
@@ -1555,17 +1571,24 @@ class Page(QWidget):
             extra = s["to_desc"] or ""
             tip = lambda r: "%s\nlead %s %s  =  operation time %s + queue %s" % (
                 names.get(r[0], r[0]), f(r[1]), u, f(r[2]), f(max(0.0, r[1] - r[2])))
-            self.t_fin.hide()
+            whole_avg = None
             self.b_whole.show()
         rows.sort(key=lambda r: (-r[1], r[0]))
         items = [{"key": r[0], "label": names.get(r[0], r[0]), "cut": r[2],
                   "queue": max(0.0, r[1] - r[2]), "tip": tip(r)} for r in rows]
         avg = (sum(r[1] for r in rows) / len(rows)) if rows else None
-        self.serc.set_data(items, unit, avg, "no serials with a closed step")
+        if whole_avg is not None:
+            avg = whole_avg                  # the same figure as LEAD at the top
+        self.serc.set_data(items, unit, avg,
+                           "no serial has finished the route in this selection"
+                           if (picked is None and self.sel_step is None)
+                           else "no serials with a closed step")
         self.scard.title_lbl.setText(title)
         if rows:
             lo, hi = rows[-1][1], rows[0][1]
-            self.scard.set_sub("%d serials · %s .. %s %s" % (len(rows), f(lo), f(hi), u))
+            ends = ("op %s → op %s · " % (data.get("route_first"), data.get("route_last"))
+                    if (picked is None and self.sel_step is None and data) else "")
+            self.scard.set_sub("%d serials · %s%s .. %s %s" % (len(rows), ends, f(lo), f(hi), u))
             self.scard.setToolTip("Longest first · %s" % extra)
         else:
             self.scard.set_sub(extra)

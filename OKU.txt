@@ -103,6 +103,16 @@ eski surumle yan yana calisabilir.
         edilerek alinir ve kullanilmadan once saglamlik testinden gecer.
         Kopyada bir sorun olursa program hata vermez, ortak dosyadan
         okumaya doner (eskisi gibi yavas ama dogru).
+  - TUM ROTA LEAD TIME = ILK OPERASYON BITIS -> SON OPERASYON BITIS:
+    Lead Time Analysis'te ustteki LEAD / OP. TIME / QUEUE / FLOW EFF.
+    kutulari ve "Serials - whole route" grafigi artik seri basina
+      traveler'daki SON operasyonun X'i - ILK operasyonun tamamlanmasi
+    olarak hesaplanir (Waterfall'daki AVG LEAD ile ayni sayi).  Onceden
+    adimlar toplaniyordu; X'siz gecilen ya da aykiri sayilan bir adim
+    toplami kisaltiyordu.  Yalniz rotayi bitirmis seriler girer.
+    Ortalamaya, medyanin 3 katini asan seriler girmez (grafikte
+    gorunur, ustune gelince yazar).  "Finished only" dugmesi kalkti.
+    Steps tablosu ve Route profile adim bazinda, degismedi.
   - KOPYA NEREDE: Masaustunde "WIP TRACKER LOCAL COPY" klasoru; program
     kendisi olusturur, icinde ne oldugunu anlatan bir not dosyasi vardir.
     Program kapaninca kopya SILINMEZ (sonraki acilis hizli olsun diye).

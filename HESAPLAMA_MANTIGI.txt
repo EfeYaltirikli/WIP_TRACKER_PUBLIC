@@ -477,6 +477,21 @@ TARIH FILTRESI (2.1.3) - modulde secilir:
                 satilmis tum seriler.
 Waterfall'daki AVG LEAD tarih filtresine bakmaz, her zaman tum zamandir.
 
+TUM ROTA (2.3.0) - sayfanin ustundeki LEAD / OP. TIME / QUEUE / FLOW EFF.
+ve "Serials - whole route" grafigi:
+    Bir serinin toplam lead time'i = rotanin SON operasyonunun X'i -
+        ILK operasyonunun tamamlanmasi (X'i; X'siz gecildiyse son girisi).
+        Arada ne oldugu onemli degil (X'siz gecilen, aykiri adim).
+        Son operasyonu X ile kapanmamis seri girmez.
+    OPERATION TIME = ilk operasyondan SONRAKI tum operasyonlarin isi.
+    Ortalama: negatif ve medyanin 3 katini asan seriler haric (en az 3
+        seri varsa); bunlar grafikte gorunur.
+    Waterfall'daki AVG LEAD ile ayni kural ve ayni sayi (ayni rota
+    secenekleriyle).  Rotayi bitiren seri yoksa adimlarin toplami
+    gosterilir.
+    "By op date" tarih filtresinde ilk ve son operasyonun kaydi da
+    aralikta olan seriler girer.
+
 OPERASYON GRUPLARI (2.2.0): kullanici bir parcanin operasyonlarini kendi
 adlandirdigi gruplara koyar (TURN = 130, 140, 150); ayni grup adina
 birden fazla parcanin operasyonlari girebilir.
