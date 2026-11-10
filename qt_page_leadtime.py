@@ -6,37 +6,46 @@ WATERFALL page, on a page of its own.  The figures are worked out exactly
 as before (wip_core.lead_time_analysis: completion to completion in clock
 time, cutting = machine time or - where there is none - labour).
 
-Two modules side by side:
+Four modules, each switched on and off in the MODULES row:
 
     STEPS             one part, one row per operation of its route
     OPERATION GROUPS  named stretches of a route (TURN = 130 -> 150), over
                       one or several parts; the group's own average and
                       each part's beside it.  The sets are saved for
                       everybody (wip_core.lt_groups_*).
+    ROUTE PROFILE     a column per operation, cutting under queue - where
+                      the time goes along the route.  Click a column (or a
+                      row of STEPS) to look at that one step.
+    SERIALS           a column per serial, longest first, against the
+                      average: the whole route, or the step picked.
 
 The date range picks the data one of three ways: the operation records
 inside it, the serials seen inside it (all their records), or the serials
 SOLD inside it (all their records).  Shown in days; hours on request.
 """
 
+import math
 import re
 import traceback
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt, QTimer, QRectF, QPointF
+from PySide6.QtGui import QColor, QPainter, QPen, QFont, QFontMetrics, QCursor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QFileDialog,
-                               QComboBox, QLineEdit, QDialog, QScrollArea, QFrame)
+                               QComboBox, QLineEdit, QDialog, QScrollArea, QFrame,
+                               QToolTip, QSizePolicy)
 
 from wip_core import (ALL, export_leadtime_to_excel, format_wf_hours, lead_time_analysis,
                       lead_group_analysis, lt_groups_load, lt_groups_save, lt_groups_delete,
                       norm_text, route_step, time_mode_to_date_range, save_prefs)
 from qt_widgets import (ctx, ModuleCard, DataTable, FilterBar, Toggle, Seg, FlowLayout,
                         label, button, hbox, autofit_columns, KpiInline, ModuleGrid, page_layout,
-                        page_head, export_button)
+                        page_head, export_button, ZoomControl, serial_menu)
+from qt_theme import FONT
 
 # lead blue, cutting green, queue yellow - one set per theme
 LT_SOFT_NIGHT = {"lead": "#6FA8FF", "cut": "#4CC67A", "queue": "#E8B53E"}
 LT_SOFT_DAY = {"lead": "#1F63D6", "cut": "#1E8E46", "queue": "#A87400"}
+MIN_ROWS = 14        # a table shows at least this many rows; beyond the window the page scrolls
 DATE_MODES = [("By op date", "ops"), ("By serial", "serial"), ("Sold in range", "sold")]
 MODE_TIP = ("By op date: only the operation records inside the date range.\n"
             "By serial: the serials with an entry inside the range, with all their "
@@ -65,6 +74,209 @@ def eff_text(eff, overlap=False):
     if eff is None:
         return ""
     return ("%.0f%% *" if overlap else "%.0f%%") % (eff * 100.0)
+
+
+# =====================================================================
+#  A COLUMN CHART: cutting under queue, an average line
+# =====================================================================
+class ColumnChart(QWidget):
+    """One column per item, cutting (green) with queue (yellow) on top, a
+    dashed line at the average.  Painted by hand in the theme's colours;
+    it has no scrolling of its own, so the wheel over it moves the page.
+
+        set_data([{"key", "label", "cut", "queue", "tip"}], unit, avg)
+
+    Hovering names the column; a click calls on_pick(key), a right-click
+    on_menu(key, global position).  `picked` keeps one column lit."""
+    BASE_H = 250
+
+    def __init__(self, labels=True):
+        super().__init__()
+        self.items, self.unit, self.avg = [], "days", None
+        self.labels = labels            # the label under every column
+        self.zoom = 1.0
+        self.picked = None
+        self.hover = -1
+        self.empty_text = ""
+        self.on_pick = None
+        self.on_menu = None
+        self._geo = None
+        self.setMouseTracking(True)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setFixedHeight(self.BASE_H)
+
+    def set_zoom(self, z):
+        self.zoom = max(0.5, min(2.5, z))
+        self.setFixedHeight(int(self.BASE_H * self.zoom))
+        self.update()
+
+    def set_data(self, items, unit, avg=None, empty_text=""):
+        self.items, self.unit, self.avg = list(items), unit, avg
+        self.empty_text = empty_text
+        self.hover = -1
+        self.update()
+
+    def clear(self, text=""):
+        self.set_data([], self.unit, None, text)
+
+    def font_(self, size, bold=False):
+        f = QFont(FONT)
+        f.setPointSizeF(max(6.0, size * self.zoom))
+        f.setBold(bold)
+        return f
+
+    @staticmethod
+    def nice_top(v):
+        """An axis end a little over v: 1, 2, 2.5, 5 x a power of ten."""
+        if v <= 0:
+            return 1.0
+        e = 10.0 ** math.floor(math.log10(v))
+        for k in (1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0):
+            if e * k >= v:
+                return e * k
+        return e * 10.0
+
+    def geometry_(self):
+        """(plot rect, column pitch, column width, axis top in shown units)."""
+        k = 24.0 if self.unit == "days" else 1.0
+        top = max([(it["cut"] + it["queue"]) / k for it in self.items] + [(self.avg or 0) / k])
+        top = self.nice_top(top * 1.05)
+        fm = QFontMetrics(self.font_(8))
+        left = fm.horizontalAdvance("%.2f" % top) + 12
+        bottom = 8
+        if self.labels and self.items:
+            bottom = max(fm.horizontalAdvance(str(it["label"])) for it in self.items) + 12
+            bottom = min(bottom, int(70 * self.zoom))
+        plot = QRectF(left, 14 * self.zoom, max(10, self.width() - left - 8),
+                      max(10, self.height() - 14 * self.zoom - bottom))
+        n = max(1, len(self.items))
+        pitch = plot.width() / float(n)
+        colw = max(1.0, min(pitch * 0.72, 34 * self.zoom))
+        return plot, pitch, colw, top, k
+
+    def index_at(self, x):
+        if not self.items or self._geo is None:
+            return -1
+        plot, pitch = self._geo[0], self._geo[1]
+        if x < plot.left() or x > plot.right():
+            return -1
+        return max(0, min(len(self.items) - 1, int((x - plot.left()) // pitch)))
+
+    def mouseMoveEvent(self, ev):
+        i = self.index_at(ev.position().x())
+        if i != self.hover:
+            self.hover = i
+            self.setCursor(Qt.PointingHandCursor if (i >= 0 and self.on_pick) else Qt.ArrowCursor)
+            self.update()
+        if i >= 0 and self.items[i].get("tip"):
+            QToolTip.showText(QCursor.pos(), self.items[i]["tip"], self)
+        else:
+            QToolTip.hideText()
+
+    def leaveEvent(self, ev):
+        self.hover = -1
+        self.update()
+
+    def mousePressEvent(self, ev):
+        i = self.index_at(ev.position().x())
+        if i < 0:
+            return
+        if ev.button() == Qt.RightButton:
+            if self.on_menu:
+                self.on_menu(self.items[i]["key"], ev.globalPosition().toPoint())
+        elif self.on_pick:
+            self.on_pick(self.items[i]["key"])
+
+    def wheelEvent(self, ev):
+        if ev.modifiers() & Qt.ControlModifier:
+            w = self.parentWidget()
+            while w is not None:
+                zc = getattr(w, "zoom", None)
+                if isinstance(zc, ZoomControl):
+                    zc.step(10 if ev.angleDelta().y() > 0 else -10)
+                    ev.accept()
+                    return
+                w = w.parentWidget()
+        ev.ignore()                      # the page scrolls
+
+    def paintEvent(self, ev):
+        th = ctx.TH
+        s_ = soft()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        if not self.items:
+            p.setPen(QColor(th["muted"]))
+            p.setFont(self.font_(10))
+            p.drawText(self.rect(), Qt.AlignCenter, self.empty_text or "nothing to show")
+            p.end()
+            self._geo = None
+            return
+        self._geo = geo = self.geometry_()
+        plot, pitch, colw, top, k = geo
+        fm_f = self.font_(8)
+        p.setFont(fm_f)
+        # grid and the axis figures
+        for g in range(5):
+            y = plot.bottom() - plot.height() * g / 4.0
+            p.setPen(QPen(QColor(th["border"]), 1))
+            p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+            p.setPen(QColor(th["muted"]))
+            p.drawText(QRectF(0, y - 9, plot.left() - 6, 18), Qt.AlignRight | Qt.AlignVCenter,
+                       "%.2f" % (top * g / 4.0))
+        cut_c, queue_c = QColor(s_["cut"]), QColor(s_["queue"])
+        every = 1
+        if self.labels:
+            lh = QFontMetrics(fm_f).height()
+            every = max(1, int(lh / max(1.0, pitch)) + (1 if pitch < lh else 0))
+        for i, it in enumerate(self.items):
+            x = plot.left() + i * pitch + (pitch - colw) / 2.0
+            ch = plot.height() * (it["cut"] / k) / top
+            qh = plot.height() * (it["queue"] / k) / top
+            lit = (i == self.hover) or (self.picked is not None and it["key"] == self.picked)
+            dim = self.picked is not None and it["key"] != self.picked and i != self.hover
+            p.setPen(Qt.NoPen)
+            p.setOpacity(0.35 if dim else 1.0)
+            p.setBrush(cut_c)
+            p.drawRect(QRectF(x, plot.bottom() - ch, colw, ch))
+            p.setBrush(queue_c)
+            p.drawRect(QRectF(x, plot.bottom() - ch - qh, colw, qh))
+            p.setOpacity(1.0)
+            if lit:
+                p.setBrush(Qt.NoBrush)
+                p.setPen(QPen(QColor(th["text"]), 1.2))
+                p.drawRect(QRectF(x - 1, plot.bottom() - ch - qh - 1, colw + 2, ch + qh + 1))
+            if self.labels and i % every == 0:
+                p.save()
+                p.translate(x + colw / 2.0, plot.bottom() + 6)
+                p.rotate(-90)
+                p.setPen(QColor(th["text"] if lit else th["muted"]))
+                p.drawText(QRectF(-200, -9, 200, 18), Qt.AlignRight | Qt.AlignVCenter,
+                           str(it["label"]))
+                p.restore()
+        if self.avg is not None:
+            y = plot.bottom() - plot.height() * (self.avg / k) / top
+            pen = QPen(QColor(s_["lead"]), 1.4, Qt.DashLine)
+            p.setPen(pen)
+            p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+            p.setFont(self.font_(8, True))
+            txt = "avg %.2f" % (self.avg / k)
+            tw = QFontMetrics(p.font()).horizontalAdvance(txt) + 8
+            p.fillRect(QRectF(plot.right() - tw, y - 16, tw, 14), QColor(th["card"]))
+            p.drawText(QRectF(plot.right() - tw, y - 17, tw - 2, 16),
+                       Qt.AlignRight | Qt.AlignVCenter, txt)
+        p.end()
+
+
+def legend_dots():
+    """cutting / queue / average - what the chart colours mean."""
+    s_ = soft()
+    lb = label("", muted=True)
+    lb.setTextFormat(Qt.RichText)
+    lb.setText('<span style="color:%s;">■</span> cutting &nbsp; '
+               '<span style="color:%s;">■</span> queue &nbsp; '
+               '<span style="color:%s;">- -</span> average'
+               % (s_["cut"], s_["queue"], s_["lead"]))
+    return lb
 
 
 # =====================================================================
@@ -299,7 +511,22 @@ class Page(QWidget):
         head.addStretch(1)
         head.addWidget(export_button(self.do_export))
 
-        # ---- the two modules ----
+        # ---- MODULES: each one on / off, and the zoom ----
+        trow = QHBoxLayout()
+        trow.setSpacing(8)
+        trow.addWidget(label("MODULES", section=True))
+        self.t_steps = Toggle("Steps", checked=True, slot=self.rebuild_panels)
+        self.t_groups = Toggle("Operation groups", checked=True, slot=self.rebuild_panels)
+        self.t_prof = Toggle("Route profile", checked=True, slot=self.rebuild_panels)
+        self.t_ser = Toggle("Serials", checked=True, slot=self.rebuild_panels)
+        for t in (self.t_steps, self.t_groups, self.t_prof, self.t_ser):
+            trow.addWidget(t)
+        trow.addStretch(1)
+        self.zoom = ZoomControl(lambda: [self.table, self.gtable, self.prof, self.serc])
+        trow.addWidget(self.zoom)
+        outer.addLayout(trow)
+
+        # ---- the tables: steps | operation groups ----
         self.grid = ModuleGrid()
         outer.addWidget(self.grid)
         self.steps = ModuleCard("Steps", "", on_export=self.do_export)
@@ -311,7 +538,9 @@ class Page(QWidget):
         self.table = DataTable()
         self.table.tiles = True
         self.table.fit_width = True
+        self.table.fit_min = MIN_ROWS
         self.table.fit_rows(24)
+        self.table.on_row_click = lambda ri, _row: self.pick_step(ri)
         self.steps.content_lay.addWidget(self.table, 1)
         self.steps.setMinimumWidth(420)
 
@@ -333,17 +562,50 @@ class Page(QWidget):
         self.gtable = DataTable()
         self.gtable.tiles = True
         self.gtable.fit_width = True
+        self.gtable.fit_min = MIN_ROWS
         self.gtable.fit_rows(24)
         self.gcard.content_lay.addWidget(self.gtable, 1)
         self.gnote = label("", muted=True, wrap=True)
         self.gcard.content_lay.addWidget(self.gnote)
         self.gcard.setMinimumWidth(420)
-
         self.grid.add(self.steps, wide=True, weight=3)
         self.grid.add(self.gcard, wide=True, weight=3)
-        self.steps.show()
-        self.gcard.show()
+
+        # ---- the charts under them: route profile | serials ----
+        self.grid2 = ModuleGrid()
+        outer.addWidget(self.grid2)
+        self.pcard = ModuleCard("Route profile", "per operation")
+        self.leg1 = legend_dots()
+        self.pcard.add_extra(self.leg1)
+        self.prof = ColumnChart(labels=True)
+        self.prof.on_pick = self.pick_step_key
+        self.pcard.content_lay.addWidget(self.prof)
+        self.pcard.setMinimumWidth(420)
+
+        self.scard = ModuleCard("Serials", "")
+        self.b_whole = button("Whole route", tip="Back from the picked step to the whole route",
+                              slot=lambda: self.pick_step(None))
+        self.b_whole.hide()
+        self.t_fin = Toggle("Finished only", checked=True, slot=self.draw_charts)
+        self.t_fin.setToolTip("Only the serials whose last operation is closed (X) - a part "
+                              "still on the floor has only part of its lead time.")
+        self.scard.add_extra(self.b_whole)
+        self.scard.add_extra(self.t_fin)
+        self.serc = ColumnChart(labels=False)
+        self.serc.on_menu = lambda key, gpos: serial_menu(
+            (self.last["data"] or {}).get("serial_names", {}).get(key, key), gpos)
+        self.scard.content_lay.addWidget(self.serc)
+        self.scard.setMinimumWidth(420)
+        self.grid2.add(self.pcard, wide=True, weight=3)
+        self.grid2.add(self.scard, wide=True, weight=3)
+
+        self.flags = ((self.t_steps, self.steps, self.grid), (self.t_groups, self.gcard, self.grid),
+                      (self.t_prof, self.pcard, self.grid2), (self.t_ser, self.scard, self.grid2))
+        self.sel_step = None                 # index into data["steps"], None = whole route
+        for _t, c, _g in self.flags:
+            c.show()
         self.grid.relayout()
+        self.grid2.relayout()
         self.paint_kpis()
 
     # ---------------------------------------------------------------
@@ -353,6 +615,25 @@ class Page(QWidget):
                        (self.k_eff, "cut")):
             k.color = s[key]
             k.paint()
+
+    def rebuild_panels(self):
+        for t, c, _g in self.flags:
+            if not t.isChecked() and c.detached:
+                c.dock()
+            c.setVisible(t.isChecked())
+        self.grid.relayout()
+        self.grid2.relayout()
+        self.schedule()
+
+    # ---- one step picked (a row of STEPS, a column of the profile) ----
+    def pick_step_key(self, key):
+        self.pick_step(key)
+
+    def pick_step(self, idx):
+        if idx is not None and idx == self.sel_step:
+            idx = None                       # a second click lets go
+        self.sel_step = idx
+        self.draw_charts()
 
     def _mode_changed(self, v):
         try:
@@ -497,8 +778,8 @@ class Page(QWidget):
     def refresh(self, force=False):
         if not self.built:
             return
-        if not force and not self.isVisible() and not (self.steps.detached
-                                                       or self.gcard.detached):
+        if not force and not self.isVisible() and not any(c.detached
+                                                         for _t, c, _g in self.flags):
             return
         self.timer.stop()
         ctx.busy(True, "Working out lead times...")
@@ -553,8 +834,12 @@ class Page(QWidget):
                                           exclude_clean=self.t_noclean.isChecked(),
                                           dedupe_ops=self.t_dedupe.isChecked(),
                                           exclude_serial_keys=excl or None, date_mode=mode)
+        if data is not self.last.get("drawn"):
+            self.sel_step = None             # other figures: the picked step goes
         self.last["data"] = data
+        self.last["drawn"] = data
         self.show_steps(data, unit, pk)
+        self.draw_charts()
 
         # the groups: their own parts; the machines filter belongs to the
         # one part picked above, so only the serial list and flags apply
@@ -636,6 +921,81 @@ class Page(QWidget):
         self.steps.title_lbl.setText("Steps · %s" % self.last["part"])
         self.steps.set_sub("%d serials · each step from the operation above it"
                            % data["n_serials"])
+
+    # ---- THE CHARTS ----
+    def draw_charts(self):
+        data, unit = self.last["data"], self.unit.get()
+        u = "d" if unit == "days" else "h"
+        for lb in (self.leg1,):
+            s_ = soft()
+            lb.setText('<span style="color:%s;">■</span> cutting &nbsp; '
+                       '<span style="color:%s;">■</span> queue &nbsp; '
+                       '<span style="color:%s;">- -</span> average'
+                       % (s_["cut"], s_["queue"], s_["lead"]))
+        if not data:
+            self.prof.clear("pick a part")
+            self.serc.clear("pick a part")
+            self.scard.title_lbl.setText("Serials")
+            self.scard.set_sub("")
+            self.b_whole.hide()
+            return
+        steps = data["steps"]
+        if self.sel_step is not None and not (0 <= self.sel_step < len(steps)):
+            self.sel_step = None
+        f = lambda v: format_wf_hours(v, unit)
+
+        # the route, operation by operation
+        items = []
+        for i, s in enumerate(steps):
+            if s["avg_hours"] is None:
+                continue
+            items.append({"key": i, "label": s["to_op"], "cut": s["cut_hours"] or 0.0,
+                          "queue": s["queue_hours"] or 0.0,
+                          "tip": "%s  %s\nlead %s %s  =  cutting %s + queue %s\n%d serials"
+                                 "\nclick: this step's serials"
+                                 % (s["to_op"], s["to_desc"] or "", f(s["avg_hours"]), u,
+                                    f(s["cut_hours"]), f(s["queue_hours"]), s["n"])})
+        avg = (sum(it["cut"] + it["queue"] for it in items) / len(items)) if items else None
+        self.prof.picked = self.sel_step
+        self.prof.set_data(items, unit, avg, "no closed steps in this selection")
+
+        # the serials: the whole route, or the step picked
+        names = data.get("serial_names", {})
+        if self.sel_step is None:
+            fin = data.get("finished") or set()
+            rows = [(sk, v[0], v[1], v[2]) for sk, v in data.get("per_serial", {}).items()]
+            only_fin = self.t_fin.isChecked() and any(r[0] in fin for r in rows)
+            if only_fin:
+                rows = [r for r in rows if r[0] in fin]
+            title = "Serials · whole route"
+            n_steps = len([s for s in steps if s["avg_hours"] is not None])
+            extra = "finished serials" if only_fin else "all serials (parts on the floor too)"
+            tip = lambda r: "%s\nlead %s %s  =  cutting %s + queue %s\n%d of %d steps measured" % (
+                names.get(r[0], r[0]), f(r[1]), u, f(r[2]), f(max(0.0, r[1] - r[2])), r[3],
+                n_steps)
+            self.t_fin.show()
+            self.b_whole.hide()
+        else:
+            s = steps[self.sel_step]
+            rows = [(sk, h, c, 1) for sk, h, c in s.get("serials", [])]
+            title = "Serials · op %s" % s["to_op"]
+            extra = s["to_desc"] or ""
+            tip = lambda r: "%s\nlead %s %s  =  cutting %s + queue %s" % (
+                names.get(r[0], r[0]), f(r[1]), u, f(r[2]), f(max(0.0, r[1] - r[2])))
+            self.t_fin.hide()
+            self.b_whole.show()
+        rows.sort(key=lambda r: (-r[1], r[0]))
+        items = [{"key": r[0], "label": names.get(r[0], r[0]), "cut": r[2],
+                  "queue": max(0.0, r[1] - r[2]), "tip": tip(r)} for r in rows]
+        avg = (sum(r[1] for r in rows) / len(rows)) if rows else None
+        self.serc.set_data(items, unit, avg, "no serials with a closed step")
+        self.scard.title_lbl.setText(title)
+        if rows:
+            lo, hi = rows[-1][1], rows[0][1]
+            self.scard.set_sub("%d serials · %s .. %s %s" % (len(rows), f(lo), f(hi), u))
+            self.scard.setToolTip("Longest first · %s" % extra)
+        else:
+            self.scard.set_sub(extra)
 
     # ---- OPERATION GROUPS ----
     def show_groups(self, groups, unit, name):
@@ -721,6 +1081,7 @@ class Page(QWidget):
         self.paint_kpis()
         if self.built:
             self.show_steps(self.last["data"], self.unit.get(), self.bar.parts.get_selected())
+            self.draw_charts()
             self.show_groups(self.last["groups"], self.unit.get(), self.last["set"])
 
     def annotations_changed(self):

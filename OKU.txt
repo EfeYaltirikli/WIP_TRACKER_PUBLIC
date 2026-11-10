@@ -101,6 +101,21 @@ eski surumle yan yana calisabilir.
     Grup satiri: gruptaki tum parcalarin TUM serilerinin ortalamasi;
     altinda her parcanin kendi ortalamasi.  Analizler herkes icin
     kaydedilir (Edit / Delete).  Excel'de "OP GROUPS" sayfasi.
+  - GRAFIKLER (ayni sayfa, tablolarin altinda):
+      ROUTE PROFILE  her operasyon bir sutun: altta cutting (yesil),
+                     ustte queue (sari), kesik cizgi ortalama.  Bir
+                     sutuna (ya da Steps tablosunda bir satira)
+                     tiklayinca SERIALS grafigi o adimi gosterir.
+      SERIALS        her seri bir sutun, en uzun olan solda; tum rota
+                     ya da secilen adim.  Ustune gelince seri no ve
+                     sureleri; sag tik = seri menusu.  "Finished only" =
+                     yalniz son operasyonu kapanmis seriler.  "Whole
+                     route" secilen adimdan tum rotaya doner.
+  - MODULES satiri: Steps / Operation groups / Route profile / Serials
+    ayri ayri acilip kapanir (diger sayfalardaki gibi); Zoom - / + ve
+    Ctrl + tekerlek tablo ve grafikleri buyutur / kucultur.
+  - Tablolar en az 14 satir gosterir; pencereye sigmayinca sayfa asagi
+    kayar.  Grafiklerin ustunde tekerlek sayfayi kaydirir.
   - 0600 / 600: RW Analysis ve Cause tablolarinda ayni operasyon iki ayri
     satir olarak cikiyordu (veride bir satirda 0600, digerinde 600).
     Artik operasyon numarasi traveler'daki yazimla (600) gosterilir ve

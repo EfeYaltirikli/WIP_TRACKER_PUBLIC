@@ -2468,6 +2468,7 @@ class DataTable(QWidget):
         self.on_cell_click = None   # (row, col) - v69: a click on a merged box cell
         self.on_head_click = None   # (col) - v69: a left click on a heading
         self._spans_now = set()
+        self.fit_min = 5            # 2.2.0: rows shown at least, on a page (then the page scrolls)
         self.fit_width = False      # v69: every column shares the visible width, no side scroll
         self.grid = False           # v69: cell grid lines
         self.zoom = 1.0
@@ -2551,7 +2552,7 @@ class DataTable(QWidget):
             n = max(1, min(len(self.rows), self.fit_max))
         else:
             fit_n = int((room - hh - sb - 2) // max(1, self.row_h()))
-            n = max(1, min(len(self.rows), max(5, fit_n)))
+            n = max(1, min(len(self.rows), max(self.fit_min, fit_n)))
         h = hh + n * self.row_h() + sb + 2
         if h != self.height() or self.minimumHeight() != h:
             self.setFixedHeight(h)

@@ -7960,7 +7960,13 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
    step_sum, step_n, cut_sum = {}, {}, {}
    adaylar = {}                      # i -> [(hours, cut hours)]
    rsteps = [route_step(c) for c in route]      # 2.2.0: once, not per serial
-   for entries in by_serial.values():
+   finished, names = set(), {}
+   for sk, entries in by_serial.items():
+       if lead_x_dt(entries.get(rsteps[-1])) is not None:
+           finished.add(sk)
+       for r in entries.values():
+           names[sk] = r.get("serial") or sk
+           break
        for i in range(len(route) - 1):
            r2 = entries.get(rsteps[i + 1])
            if r2 is None or lead_x_dt(r2) is None:
@@ -7976,13 +7982,26 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
            # The work content of the operation the part is arriving at:
            # machine time, or labour where the operation has no machine.
            # Everything else in the step was queue.
-           adaylar.setdefault(i, []).append((hrs, lead_cut_hours(r2)))
+           adaylar.setdefault(i, []).append((hrs, lead_cut_hours(r2), sk))
+   # 2.2.0: the kept figures per serial too - the page charts them.
+   # {step index: [(serial key, lead, cut)]}, {serial key: [lead, cut, steps]}
+   step_serials, per_serial = {}, {}
    for i, vals in adaylar.items():
-       for (hrs, cut), keep in zip(vals, lead_keep_mask([v[0] for v in vals])):
+       kept = step_serials[i] = []
+       for (hrs, cut, sk), keep in zip(vals, lead_keep_mask([v[0] for v in vals])):
            if keep:
                step_sum[i] = step_sum.get(i, 0.0) + hrs
                step_n[i] = step_n.get(i, 0) + 1
                cut_sum[i] = cut_sum.get(i, 0.0) + cut
+               c = min(cut, hrs)
+               kept.append((sk, hrs, c))
+               t = per_serial.get(sk)
+               if t is None:
+                   per_serial[sk] = [hrs, c, 1]
+               else:
+                   t[0] += hrs
+                   t[1] += c
+                   t[2] += 1
 
    steps = []
    tot_lead = tot_cut = 0.0
@@ -8021,8 +8040,11 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
            # and queue is the thing that can be removed without buying
            # anything.
            "efficiency": (cut / lead) if (lead and cut is not None) else None,
+           "serials": step_serials.get(i, []),
        })
    return {"route": route, "steps": steps, "date_mode": date_mode,
+           "per_serial": per_serial, "serial_names": names,
+           "finished": finished,
            "n_serials": len(by_serial), "n_completed_pairs": sum(step_n.values()),
            "total_lead": tot_lead, "total_cut": tot_cut,
            "total_queue": max(0.0, tot_lead - tot_cut),
