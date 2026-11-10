@@ -2160,8 +2160,8 @@ def flag_kind_in(kind, kinds):
 # thousands of them.  On the desktop the same program is quick.
 #
 # So the data is brought to this computer ONCE.  The whole file is copied
-# into ~/.rw_analysis/local_copy (one sequential read of the share - the
-# fastest thing a share can do), and from then on every SELECT that only
+# into "WIP TRACKER LOCAL COPY" on the Desktop (one sequential read of the
+# share - the fastest thing a share can do; see mirror_default_dir), and from then on every SELECT that only
 # touches the big DATA tables is answered from the copy:
 #
 #     rw, ops, wf_part_data, shipment, discarded, parts, comp, wf_traveler
@@ -2192,7 +2192,60 @@ MIRROR_NEVER = frozenset(("meta", "serial_flags", "user_note", "app_user", "layo
                           "layout_item", "agg_cache", "app_session", "sqlite_master",
                           "sqlite_sequence", "sqlite_temp_master", "sess", "temp",
                           "main", "pragma_table_info"))
-MIRROR_DIR = os.environ.get("WIP_LOCAL_COPY_DIR") or os.path.join(APP_DIR, "local_copy")
+MIRROR_FOLDER = "WIP TRACKER LOCAL COPY"
+MIRROR_OLD_DIR = os.path.join(APP_DIR, "local_copy")     # where 2.3.0 first put it
+MIRROR_NOTE = "BU KLASOR SILINEBILIR - READ ME.txt"
+MIRROR_NOTE_TEXT = (
+    "WIP TRACKER - YEREL KOPYA / LOCAL COPY\r\n"
+    "======================================\r\n\r\n"
+    "Bu klasordeki .db dosyasi, ortak alandaki veritabaninin bu bilgisayardaki\r\n"
+    "KOPYASIDIR.  Program hizli calissin diye buyuk tablolari buradan okur.\r\n\r\n"
+    "- Bu klasoru SILEBILIRSINIZ (program kapaliyken).  Hicbir veri kaybolmaz:\r\n"
+    "  asil veri ortak alandadir.  Program bir sonraki acilista kopyayi yeniden\r\n"
+    "  olusturur (acilis o sefer biraz uzun surer).\r\n"
+    "- Buradaki dosyayi degistirmeyin, baska yere tasimayin.\r\n"
+    "- Icinde uretim verisi vardir: klasoru baskasiyla paylasmayin.\r\n\r\n"
+    "This folder holds a copy of the shared database so the program reads it\r\n"
+    "from this computer.  It can be deleted while the program is closed; it is\r\n"
+    "made again the next time the program starts.\r\n")
+
+
+def desktop_dir():
+   """This account's Desktop as Windows has it (it may have been moved),
+   or ~/Desktop elsewhere.  None when there is none."""
+   p = None
+   if os.name == "nt":
+      try:
+         import ctypes
+         buf = ctypes.create_unicode_buffer(520)
+         # CSIDL_DESKTOPDIRECTORY = 0x10, current path
+         if ctypes.windll.shell32.SHGetFolderPathW(None, 0x10, None, 0, buf) == 0:
+            p = buf.value
+      except Exception:
+         p = None
+   if not p:
+      p = os.path.join(os.path.expanduser("~"), "Desktop")
+   return p if os.path.isdir(p) else None
+
+
+def mirror_default_dir():
+   """Where the local copy is kept: a folder ON THE DESKTOP, in plain
+   sight, so whoever it bothers can see what it is and delete it.
+
+   A Desktop that is synced to OneDrive is the exception: every new copy
+   (hundreds of MB, after every upload) would be sent to the cloud, and
+   the production data with it.  The folder then goes into the user's own
+   folder instead (C:\\Users\\name) - still visible, not synced."""
+   env = os.environ.get("WIP_LOCAL_COPY_DIR")
+   if env:
+      return env
+   desk = desktop_dir()
+   if desk and "onedrive" not in desk.lower():
+      return os.path.join(desk, MIRROR_FOLDER)
+   return os.path.join(os.path.expanduser("~"), MIRROR_FOLDER)
+
+
+MIRROR_DIR = mirror_default_dir()
 _MIRROR_ROUTE = {}
 _MIRROR_FROM = re.compile(r"\b(?:from|join)\s+([a-z_][a-z0-9_.]*)")
 _MIRROR_WORD = re.compile(r"[a-z_][a-z0-9_]*")
@@ -2423,8 +2476,10 @@ def _mirror_cleanup(base, keep=()):
       names = [n for n in os.listdir(MIRROR_DIR) if n.startswith(base)]
    except OSError:
       return
-   # the newest two are always left: the one in use and the one before it
-   for n in sorted(names)[:-2]:
+   # ONE copy is kept (2.3.0, second build): the one in use.  A file some
+   # connection still has open cannot be removed on Windows - it goes the
+   # next time.
+   for n in sorted(names):
       p = os.path.abspath(os.path.join(MIRROR_DIR, n))
       if p in keep:
          continue
@@ -2432,6 +2487,25 @@ def _mirror_cleanup(base, keep=()):
          os.remove(p)
       except OSError:
          pass
+
+
+def mirror_housekeeping():
+   """The note that says what the folder is, and the folder the first
+   2.3.0 build used (hidden in ~/.rw_analysis) emptied."""
+   try:
+      note = os.path.join(MIRROR_DIR, MIRROR_NOTE)
+      if not os.path.exists(note):
+         with open(note, "w", encoding="utf-8", newline="") as f:
+            f.write(MIRROR_NOTE_TEXT)
+   except OSError:
+      pass
+   try:
+      if (os.path.isdir(MIRROR_OLD_DIR)
+            and os.path.abspath(MIRROR_OLD_DIR) != os.path.abspath(MIRROR_DIR)):
+         import shutil
+         shutil.rmtree(MIRROR_OLD_DIR, ignore_errors=True)
+   except OSError:
+      pass
 
 
 def mirror_verify(path):
@@ -2658,7 +2732,9 @@ class Database:
            st["error"] = "no folder for the local copy: %s" % e
            st["enabled"] = False
            return False
+       mirror_housekeeping()
        if self._mirror_reuse():
+           _mirror_cleanup(self._mirror_base(), keep=(st["path"],))
            return True
        self._mirror_build(sync)
        return True
@@ -2706,6 +2782,9 @@ class Database:
            t0 = time.time()
            tmp = os.path.join(MIRROR_DIR, "%s.part" % base)
            try:
+               # the folder may have been deleted from the Desktop meanwhile
+               os.makedirs(MIRROR_DIR, exist_ok=True)
+               mirror_housekeeping()
                need = os.path.getsize(shared)
                try:
                    import shutil
@@ -2782,7 +2861,8 @@ class Database:
        if st["busy"]:
            return "Copying the data to this computer  %d%%" % st["pct"]
        if st["ok"]:
-           return "Data is read from this computer (local copy)"
+           return ("Data is read from this computer (local copy)\n%s"
+                   % os.path.dirname(st["path"] or ""))
        if st["error"]:
            return "Local copy not available: %s" % st["error"]
        return "Local copy is being refreshed"

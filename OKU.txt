@@ -85,7 +85,7 @@ eski surumle yan yana calisabilir.
     tablolari agdan okuyordu (dosyanin her sayfasi ayri bir ag gidis
     gelisi) - masaustunde hizli, ortak alanda cok yavas.
   - COZUM: program acilirken ortak dosya BIR KEZ bu bilgisayara
-    kopyalanir (C:\Users\<siz>\.rw_analysis\local_copy) ve buyuk veri
+    kopyalanir (MASAUSTUNDE "WIP TRACKER LOCAL COPY" klasoru) ve buyuk veri
     tablolarinin (uretim, rework, waterfall, sevkiyat, parca listesi,
     COMP, traveler) TUM okumalari bu kopyadan yapilir.  Acilista
     "Copying the data to this computer... %" yazar; bittiginde sag altta
@@ -103,8 +103,17 @@ eski surumle yan yana calisabilir.
         edilerek alinir ve kullanilmadan once saglamlik testinden gecer.
         Kopyada bir sorun olursa program hata vermez, ortak dosyadan
         okumaya doner (eskisi gibi yavas ama dogru).
+  - KOPYA NEREDE: Masaustunde "WIP TRACKER LOCAL COPY" klasoru; program
+    kendisi olusturur, icinde ne oldugunu anlatan bir not dosyasi vardir.
+    Program kapaninca kopya SILINMEZ (sonraki acilis hizli olsun diye).
+    Rahatsiz ederse klasoru SILEBILIRSINIZ (program kapaliyken) - veri
+    kaybolmaz, program bir sonraki acilista yeniden kopyalar.
+    Tek kopya tutulur; yenisi alininca eskisi silinir.
+    Masaustu OneDrive ile esitleniyorsa klasor masaustune DEGIL
+    C:\Users\<siz>\WIP TRACKER LOCAL COPY altina konur - yoksa her veri
+    yuklemesinde yuzlerce MB buluta gonderilirdi.
   - GEREKEN: bu bilgisayarda veritabani dosyasi kadar bos yer (dosya
-    500 MB ise ~600 MB).  Eski kopyalar kendiliginden silinir.
+    500 MB ise ~600 MB).
   - KAPATMAK ICIN (gerekirse): Windows ortam degiskeni WIP_LOCAL_COPY=0.
     Veritabani zaten bu bilgisayardaysa kopya hic yapilmaz.
   - Ayrica: ortak dosyaya yazilan ozetler tek tek degil toplu yazilir;
