@@ -23,7 +23,8 @@ from wip_core import (WEEKDAY_NAMES, ACC_COLORS, ACC_FLAG_KINDS, acc_board, acc_
                       acc_delete, acc_load, acc_save, iso_year_week, norm_text, op_key,
                       route_step, save_prefs, short_part, week_bounds, week_offset)
 from qt_widgets import (ctx, Splitter, Card, ModuleCard, Toggle, FlowLayout, label, button, hbox,
-                        page_layout, page_head, mix)
+                        page_layout, page_head, mix, analyses_export_dialog,
+                        analyses_import_dialog)
 from qt_theme import FONT
 
 RW_RED = "#E0443A"
@@ -538,7 +539,13 @@ class Page(QWidget):
         page_head(bv, "Custom Analysis", "Hand-picked steps as a board, with weekly targets",
                   button("+ New", slot=lambda: self.open_setup(None)),
                   button("Edit", slot=lambda: self.open_setup(self.name_cb.currentText() or None)),
-                  button("Delete", danger=True, slot=self.delete_analysis))
+                  button("Delete", danger=True, slot=self.delete_analysis),
+                  # 2.3.0: the saved analyses as an Excel file, and back
+                  button("Export analyses", slot=lambda: analyses_export_dialog(self),
+                         tip="Every saved analysis (custom and lead time) into one Excel "
+                             "file - a copy that outlives the database."),
+                  button("Import analyses", slot=self.import_analyses,
+                         tip="Builds the analyses again from such an Excel file."))
 
         # one row that wraps on a narrow window (never a sideways page)
         row_w = QWidget()
@@ -760,6 +767,11 @@ class Page(QWidget):
             pass
         self.open_boxes.clear()
         self.schedule()
+
+    def import_analyses(self):
+        if analyses_import_dialog(self):
+            self.refresh_sources()
+            self.schedule()
 
     def delete_analysis(self):
         n = self.name_cb.currentText()

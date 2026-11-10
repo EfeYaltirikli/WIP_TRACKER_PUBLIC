@@ -113,6 +113,48 @@ eski surumle yan yana calisabilir.
     Ortalamaya, medyanin 3 katini asan seriler girmez (grafikte
     gorunur, ustune gelince yazar).  "Finished only" dugmesi kalkti.
     Steps tablosu ve Route profile adim bazinda, degismedi.
+  - DUZELTME - KOPYA %99'DA KALIP BASTAN BASLIYORDU: ilk surum, kopyalama
+    sirasinda ortak dosyaya HICBIR sey yazilmamasini sart kosuyordu.
+    Oysa ortak dosyaya gun boyu kucuk seyler yazilir (birinin filtre
+    secimi, bir not, bir ozet); buyuk dosyanin kopyasi bir dakikayi
+    gectigi icin bu sart hic tutmuyor, kopya %99'a gelip atiliyor ve
+    bastan basliyordu - dosya da klasorde olusup siliniyordu.
+    Artik sart su: kopyalama sirasinda VERI (uretim / rework / waterfall
+    / sevkiyat / parca listesi / traveler) degismemis olmali.  Kucuk
+    yazilar bu tablolarin tek sayfasina dokunmaz; kopya TEK seferde
+    alinir.  Veri tablolari kullanilmadan once yine sayfa sayfa kontrol
+    edilir.  Kopyalama sirasinda gercekten veri yuklenirse o kopya
+    atilir ve yeniden alinir.
+    Kopya alinamazsa program artik 8 saniyede bir bastan kopyalamaz:
+    45 sn, sonra 1,5 dk, 3 dk ... bekleyip dener; sag alttaki "Local
+    copy -" yazisinin ustune gelince nedeni ve ne zaman deneyecegi yazar.
+    1 GB'tan buyuk dosyada Windows'un kilit baytlari atlanarak okunur.
+  - ANALIZLERI EXCEL'E ALMA / EXCEL'DEN YUKLEME: Lead Time Analysis
+    (Operation groups) ve Custom Analysis sayfalarinda "Export analyses"
+    ve "Import analyses" dugmeleri.  Export, kayitli TUM analizleri
+    (lead time gruplari + custom) tek bir Excel dosyasina yazar; Import
+    o dosyadan analizleri yeniden kurar (ayni adli analiz sorularak
+    degistirilir).  Veritabani gitse de analizler kaybolmaz - dosyayi
+    saklayin.  Dosya elle de yazilabilir / duzenlenebilir:
+      sayfa "LEAD TIME GROUPS"  (grubun her operasyonu bir satir)
+        ANALYSIS | GROUP | COLOR | PART | SUB GROUP | OP
+      sayfa "CUSTOM ANALYSIS"   (her kayit bir satir)
+        ANALYSIS | RECORD | PART | STEP | GROUP | COLOR | STG | VALUE
+        RECORD = PART (parca; STEP = baslangic adimi), STEP (secilen
+        adim + GROUP), GROUP (pano sutunu, sirayla), TARGET (STG +
+        VALUE = haftalik adet), OPTION (GROUP = show_rework / max_rows)
+    Sutun sirasi onemli degil (basliklar onemli), bos satir atlanir.
+    Dosyanin ilk sayfasinda (READ ME) ayni aciklama vardir.
+  - SERIALS GRAFIGI TARIH SIRASIYLA: "Longest first / By finish date /
+    By sale date".  Tarih sirasinda her ayin basladigi yerde ay isareti
+    (AA.YY) cikar; hangi donemin parcalari daha hizli bitmis gorulur.
+    "By sale date" yalniz satilmis serileri gosterir.
+  - ROUTE PROFILE GRUPLARA GORE: "Operations / Groups".  Groups'ta
+    Operation groups'ta secili analizin her grubu bir sutun olur;
+    sutuna tiklayinca Serials o grubun serilerini gosterir.
+  - GRUP EDITORU: First op / Last op listeleri artik fare tekerlegiyle
+    DEGISMEZ (el tekerlege degince operasyonlar gruplar arasinda
+    kayiyordu).  Asagi inip operasyon atayinca liste basa donmez.
   - ROTANIN BASLANGICI: toplam lead time'da baslangic, ILK operasyonun
     X'idir.  Ilk operasyon KAPANMAMISSA, hic giris yoksa ya da sifir
     zaman girilmisse: o seri numarasina yapilan EN ERKEN zaman girisi

@@ -2359,7 +2359,8 @@ class MirrorConn:
 def mirror_state():
    return {"enabled": False, "ok": False, "path": None, "raw": None, "live": None, "gen": 0,
            "busy": False, "pct": 0, "msg": "", "error": "", "wgen": 0, "hits": 0,
-           "sync": False, "thread": None, "secs": None, "how": ""}
+           "sync": False, "thread": None, "secs": None, "how": "",
+           "fails": 0, "retry_at": 0.0}
 
 
 def _mirror_counter(path):
@@ -2383,13 +2384,17 @@ def _mirror_journal_idle(path):
       return False
 
 
+MIRROR_SETTLE = 1.5        # seconds: a change's version stamp follows its commit
+
+
 def _mirror_stamp(conn):
-   """What identifies the data a copy holds: the data version, and the
-   size marks of the big tables (a restored backup can carry an old
-   version number)."""
+   """What identifies the data a copy holds: the data version, the note an
+   import leaves while it is still rebuilding, and the size marks of the
+   big tables (a restored backup can carry an old version number)."""
    out = []
    for sql in ("SELECT value FROM meta WHERE key='data_version'",
                "SELECT value FROM meta WHERE key='last_upload_at'",
+               "SELECT value FROM meta WHERE key='partdata_pending'",
                "SELECT MAX(id) FROM rw", "SELECT MAX(id) FROM ops",
                "SELECT MAX(id) FROM shipment", "SELECT MAX(rowid) FROM wf_part_data",
                "SELECT COUNT(*) FROM wf_traveler", "SELECT COUNT(*) FROM parts",
@@ -2402,12 +2407,42 @@ def _mirror_stamp(conn):
    return out
 
 
+MIRROR_LOCK_AT, MIRROR_LOCK_LEN = 0x40000000, 512
+
+
+def _mirror_read(fi, pos, size):
+   """`size` bytes at `pos`.  On Windows the bytes SQLite locks (512 of
+   them at the 1 GB mark, in a page it never stores anything in) cannot
+   be read while somebody holds the file exclusively - in a file that
+   big they are read around and filled with zeros."""
+   try:
+      fi.seek(pos)
+      return fi.read(size)
+   except OSError:
+      if not (pos < MIRROR_LOCK_AT + MIRROR_LOCK_LEN and pos + size > MIRROR_LOCK_AT):
+         raise
+   out = bytearray()
+   for a, b, locked in ((pos, MIRROR_LOCK_AT, False),
+                        (MIRROR_LOCK_AT, MIRROR_LOCK_AT + MIRROR_LOCK_LEN, True),
+                        (MIRROR_LOCK_AT + MIRROR_LOCK_LEN, pos + size, False)):
+      a, b = max(a, pos), min(b, pos + size)
+      if b <= a:
+         continue
+      if locked:
+         out += bytes(b - a)
+      else:
+         fi.seek(a)
+         out += fi.read(b - a)
+   return bytes(out)
+
+
 def _mirror_copy_file(src, dst, st):
    size = max(1, os.path.getsize(src))
    done = 0
+   step = 8 * 1024 * 1024
    with open(src, "rb") as fi, open(dst, "wb") as fo:
       while True:
-         buf = fi.read(8 * 1024 * 1024)
+         buf = _mirror_read(fi, done, step)
          if not buf:
             break
          fo.write(buf)
@@ -2417,29 +2452,31 @@ def _mirror_copy_file(src, dst, st):
 
 
 def mirror_make(shared_path, dst, st, wal=False):
-   """A consistent copy of the shared file at `dst`.  Returns how it was
-   made ("copy" / "backup"); raises when it could not be."""
-   if os.path.exists(dst):
-      os.remove(dst)
-   if not wal:
-      for _try in range(2):
-         # wait a moment for a write in flight to finish
-         for _w in range(40):
-            if _mirror_journal_idle(shared_path):
-               break
-            time.sleep(0.15)
-         try:
-            c1 = _mirror_counter(shared_path)
-            if not _mirror_journal_idle(shared_path):
-               continue
-            n = _mirror_copy_file(shared_path, dst, st)
-            idle = _mirror_journal_idle(shared_path)
-            c2 = _mirror_counter(shared_path)
-            if idle and c1 == c2 and n == os.path.getsize(shared_path):
-               return "copy"
-         except OSError:
-            pass
-         st["msg"] = "the shared file changed while it was copied - again"
+   """A copy of the shared file at `dst` in which the MIRRORED TABLES are
+   whole.  Returns (how it was made, the stamp of the data it holds);
+   raises when it could not be made.
+
+   WHAT "WHOLE" NEEDS (second 2.3.0 build).  The first build wanted the
+   file not to change AT ALL while it was copied (its change counter).
+   But the shared file is written to all day - somebody's filter choice,
+   a note, a stored summary - and a big file takes a minute or more to
+   copy, so that never held: the copy reached 99 %, was thrown away and
+   started again, over and over.
+
+   Those small writes do not touch a single page of the big data tables
+   (every page of the file belongs to one table).  What must not happen
+   during the copy is a change to the DATA - and every such change moves
+   the data stamp (the data version, the tables' size marks, the
+   "import in progress" note).  So: the stamp is read from the share
+   before the copy, after it, and once more a moment later (a change's
+   version stamp follows its commit); all three equal -> the data tables
+   in the copy are as they were.  A writer in the middle of changing the
+   file holds it exclusively, so the stamp read waits for it and then
+   sees its change.  The mirrored tables of the copy are then checked
+   page by page (mirror_verify) before it is used.
+
+   A database with auto_vacuum on moves pages between tables: there the
+   old strict rule (nothing at all may change) is kept."""
    if os.path.exists(dst):
       os.remove(dst)
    if wal:
@@ -2449,23 +2486,45 @@ def mirror_make(shared_path, dst, st, wal=False):
       try:
          with out:
             src.backup(out, pages=-1)
+         stamp = _mirror_stamp(out)
       finally:
          out.close()
          src.close()
-      return "backup"
-   # THE FILE WOULD NOT HOLD STILL: copy it under a read lock.  While a
-   # reader holds the file no writer can change a single page of it (it
-   # waits, as it does for any long read) - so the copy is whole.  A hot
-   # journal is rolled back by SQLite before the lock is given.
-   src = sqlite3.connect(shared_path, timeout=60, isolation_level=None)
+      return "backup", stamp
+   src = sqlite3.connect(shared_path, timeout=20)
    try:
-      src.execute("BEGIN")
-      src.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
-      _mirror_copy_file(shared_path, dst, st)
-      src.execute("ROLLBACK")
+      def stamp():
+         return with_lock_retry(lambda: _mirror_stamp(src), seconds=30.0)
+      try:
+         strict = bool(src.execute("PRAGMA auto_vacuum").fetchone()[0])
+      except sqlite3.Error:
+         strict = True
+      why = ""
+      for _try in range(3):
+         try:
+            a = stamp()
+            if "?" in a:
+               why = "the shared file is busy"
+               time.sleep(1.0)
+               continue
+            c1 = _mirror_counter(shared_path)
+            _mirror_copy_file(shared_path, dst, st)
+            b = stamp()
+            time.sleep(MIRROR_SETTLE)
+            c = stamp()
+            c2 = _mirror_counter(shared_path)
+         except (OSError, sqlite3.Error) as e:
+            why = str(e)
+            time.sleep(1.0)
+            continue
+         if a == b == c and (not strict or (c1 == c2 and _mirror_journal_idle(shared_path))):
+            return "copy", a
+         why = "the data was being changed while it was copied"
+         st["msg"] = why + " - again"
+         st["pct"] = 0
+      raise RuntimeError(why or "could not copy the shared file")
    finally:
       src.close()
-   return "locked copy"
 
 
 def _mirror_cleanup(base, keep=()):
@@ -2481,7 +2540,7 @@ def _mirror_cleanup(base, keep=()):
    # next time.
    for n in sorted(names):
       p = os.path.abspath(os.path.join(MIRROR_DIR, n))
-      if p in keep:
+      if p in keep or (p.endswith(".json") and p[:-5] in keep):
          continue
       try:
          os.remove(p)
@@ -2509,18 +2568,39 @@ def mirror_housekeeping():
 
 
 def mirror_verify(path):
-   """(raw data version, stamp) of a finished copy; raises when it is not
-   a sound database."""
+   """Every mirrored table of a finished copy read through, page by page
+   (quick_check); raises when one of them is not sound.  The small
+   tables are not looked at - they are never read from the copy."""
    c = sqlite3.connect(path)
    try:
-      c.execute("PRAGMA journal_mode = OFF")
-      r = c.execute("PRAGMA quick_check(1)").fetchone()
-      if not r or str(r[0]).lower() != "ok":
-         raise sqlite3.DatabaseError("quick_check: %s" % (r[0] if r else "?"))
-      st = _mirror_stamp(c)
-      return st[0], st
+      names = {r[0] for r in c.execute(
+          "SELECT name FROM sqlite_master WHERE type='table'")}
+      for t in sorted(MIRROR_TABLES & names):
+         try:
+            r = c.execute("PRAGMA quick_check(%s)" % t).fetchone()
+         except sqlite3.OperationalError:
+            # an SQLite too old to check one table: the whole file then
+            r = c.execute("PRAGMA quick_check(1)").fetchone()
+         if not r or str(r[0]).lower() != "ok":
+            raise sqlite3.DatabaseError("%s: %s" % (t, r[0] if r else "?"))
+      if not (MIRROR_TABLES & names):
+         raise sqlite3.DatabaseError("no data tables in the copy")
    finally:
       c.close()
+
+
+def _mirror_side(path):
+   return path + ".json"
+
+
+def _mirror_read_stamp(path):
+   """The stamp written next to a copy when it was made, or None."""
+   try:
+      with open(_mirror_side(path), "r", encoding="utf-8") as f:
+         v = json.load(f)
+      return v.get("stamp") if isinstance(v, dict) else None
+   except Exception:
+      return None
 
 
 class Database:
@@ -2741,12 +2821,15 @@ class Database:
 
    def _mirror_reuse(self):
        """A copy left by an earlier session that still holds exactly the
-       shared data: used as it is, nothing is copied."""
+       shared data: used as it is, nothing is copied.  What a copy holds
+       is written next to it when it is made (its stamp)."""
        st = self._mirror
        base = self._mirror_base()
        try:
            here = with_lock_retry(lambda: _mirror_stamp(self.conn._real), seconds=5.0)
        except Exception:
+           return False
+       if "?" in here:
            return False
        try:
            names = sorted((n for n in os.listdir(MIRROR_DIR)
@@ -2755,17 +2838,9 @@ class Database:
            return False
        for n in names:
            p = os.path.join(MIRROR_DIR, n)
-           try:
-               c = sqlite3.connect(p)
-               try:
-                   there = _mirror_stamp(c)
-               finally:
-                   c.close()
-           except Exception:
-               continue
-           if there == here and "?" not in there:
-               st.update(path=p, raw=there[0], ok=True, how="kept", error="",
-                         gen=st["gen"] + 1, pct=100, msg="")
+           if _mirror_read_stamp(p) == here:
+               st.update(path=p, raw=here[0], ok=True, how="kept", error="",
+                         gen=st["gen"] + 1, pct=100, msg="", fails=0, retry_at=0.0)
                return True
        return False
 
@@ -2794,20 +2869,33 @@ class Database:
                                      "%d MB needed)" % (free >> 20, (need * 1.2) / 1048576))
                except (AttributeError, ValueError):
                    pass
-               how = mirror_make(shared, tmp, st, wal)
-               raw, _stamp = mirror_verify(tmp)
+               how, stamp = mirror_make(shared, tmp, st, wal)
+               st["msg"] = "checking the copy"
+               mirror_verify(tmp)
+               if st["wgen"] != wgen:
+                   # this copy of the program changed the data meanwhile:
+                   # not a failure, the next one is made straight away
+                   st["retry_at"] = 0.0
+                   raise RuntimeError("the data changed while it was copied")
                final = os.path.join(MIRROR_DIR, "%s_%s.db" % (
                    base, datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")))
                os.replace(tmp, final)
-               if st["wgen"] != wgen:
-                   # this copy of the program wrote to the data meanwhile
-                   raise RuntimeError("the data changed while it was copied")
+               with open(_mirror_side(final), "w", encoding="utf-8") as f:
+                   json.dump({"stamp": stamp, "made": datetime.datetime.now().isoformat(
+                       timespec="seconds"), "from": shared}, f)
                old = st["path"]
-               st.update(path=final, raw=raw, how=how, gen=st["gen"] + 1,
-                         secs=time.time() - t0, pct=100, ok=True)
+               st.update(path=final, raw=stamp[0], how=how, gen=st["gen"] + 1,
+                         secs=time.time() - t0, pct=100, ok=True, msg="",
+                         fails=0, retry_at=0.0)
                _mirror_cleanup(base, keep=(final, old))
            except Exception as e:
                st["error"] = str(e)[:200]
+               if st["wgen"] == wgen:
+                   # A real failure: NOT tried again at once.  The first
+                   # build copied the whole file again every eight seconds
+                   # for as long as it kept failing.
+                   st["fails"] += 1
+                   st["retry_at"] = time.time() + min(900.0, 45.0 * 2 ** (st["fails"] - 1))
                try:
                    if os.path.exists(tmp):
                        os.remove(tmp)
@@ -2837,10 +2925,12 @@ class Database:
                st["live"] = r[0] if r else None
                if st["live"] != st["raw"]:
                    st["ok"] = False
+                   st["retry_at"] = 0.0      # new data: copy it now
            except sqlite3.Error:
                return st                 # somebody is writing: ask again later
        if (not st["ok"] and not st["busy"] and not getattr(self, "_in_txn", False)
-               and not self.conn._real.in_transaction):
+               and not self.conn._real.in_transaction
+               and (st["sync"] or time.time() >= st["retry_at"])):
            if not self._mirror_reuse():
                self._mirror_build(st["sync"])
        return st
@@ -2852,6 +2942,7 @@ class Database:
        st["wgen"] += 1
        st["ok"] = False
        st["live"] = None          # the version is about to move: read again
+       st["retry_at"] = 0.0
 
    def mirror_text(self):
        """One line for the status bar, '' when there is nothing to say."""
@@ -2859,12 +2950,16 @@ class Database:
        if not st["enabled"]:
            return ""
        if st["busy"]:
-           return "Copying the data to this computer  %d%%" % st["pct"]
+           return "Copying the data to this computer  %d%%%s" % (
+               st["pct"], ("\n" + st["msg"]) if st["msg"] else "")
        if st["ok"]:
            return ("Data is read from this computer (local copy)\n%s"
                    % os.path.dirname(st["path"] or ""))
        if st["error"]:
-           return "Local copy not available: %s" % st["error"]
+           wait = st["retry_at"] - time.time()
+           return "Local copy not available: %s%s\nReading from the shared file meanwhile." % (
+               st["error"], ("\nTried again in %d min." % max(1, round(wait / 60.0)))
+               if wait > 0 else "")
        return "Local copy is being refreshed"
 
    def _heal_partdata(self):
@@ -4030,6 +4125,26 @@ class Database:
            % " AND ".join(clauses), params)}
        sold.update(["RTD" + k for k in sold])
        return sold
+
+   def sold_date_map(self):
+       """2.3.0: {serial key: the day it was sold} from the shipment report
+       (the earliest, when a serial is on it twice), with the RTD spelling
+       too.  Cached on the data version."""
+       ck = (id(self), self.data_version())
+       hit = self.__dict__.get("_sold_dates")
+       if hit is not None and hit[0] == ck:
+           return hit[1]
+       out = {}
+       for r in self.conn.execute(
+               "SELECT serial_key, MIN(ac_gi_date) d FROM shipment "
+               "WHERE serial_key<>'' AND ac_gi_date IS NOT NULL AND ac_gi_date<>'' "
+               "GROUP BY serial_key"):
+           d = parse_date(r["d"])
+           if d:
+               out[r["serial_key"]] = d
+               out.setdefault("RTD" + r["serial_key"], d)
+       self._sold_dates = (ck, out)
+       return out
 
    def _bulk(self, sql, rows, chunk=4000, progress=None):
        """executemany in chunks - one round trip per few thousand rows
@@ -8803,7 +8918,7 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
    # step).  Adding the steps up lost exactly those.  Operation time: the
    # work of every operation after the first.
    # serial key -> [lead, operation time, kept, step it starts at, True
-   #                when that is the first operation's X]
+   #                when that is the first operation's X, when it finished]
    route_serial = {}
    for sk, entries in by_serial.items():
        if lead_x_dt(entries.get(rsteps[-1])) is not None:
@@ -8822,7 +8937,8 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
                        rec_ = entries.get(st_)
                        if rec_ is not None:
                            work += lead_cut_hours(rec_)
-                   route_serial[sk] = [whole, min(work, whole), True, st0, from_x]
+                   route_serial[sk] = [whole, min(work, whole), True, st0, from_x,
+                                       lead_x_dt(entries[rsteps[-1]])]
        for r in entries.values():
            names[sk] = r.get("serial") or sk
            break
@@ -8974,6 +9090,241 @@ def acc_delete(db, name):
    allv = acc_load(db)
    if allv.pop(name, None) is not None:
       db.set_meta(ACC_META_KEY, allv)
+
+
+# ---------------------------------------------------------------------------
+#  SAVED ANALYSES AS AN EXCEL FILE  (2.3.0)
+# ---------------------------------------------------------------------------
+# The LEAD TIME operation-group sets and the CUSTOM analyses live in the
+# database (meta).  So that they outlive the database - and can be handed
+# to somebody else, or written by hand - both are written to, and read
+# back from, one workbook in a fixed shape:
+#
+#   sheet LEAD TIME GROUPS     one row per operation of a group
+#       ANALYSIS | GROUP | COLOR | PART | SUB GROUP | OP
+#   sheet CUSTOM ANALYSIS      one row per record of an analysis
+#       ANALYSIS | RECORD | PART | STEP | GROUP | COLOR | STG | VALUE
+#       RECORD = PART    the part: COLOR, STG, STEP = its start step
+#                STEP    one chosen step of a part and its GROUP
+#                GROUP   a board column (rows in board order)
+#                TARGET  pieces per week of one STG (VALUE)
+#                OPTION  GROUP = show_rework / max_rows, VALUE
+#
+# Reading is forgiving: column order does not matter (the headings do),
+# blank lines are skipped, a sheet may be missing.
+ANALYSES_LT_SHEET = "LEAD TIME GROUPS"
+ANALYSES_ACC_SHEET = "CUSTOM ANALYSIS"
+ANALYSES_LT_HEAD = ["ANALYSIS", "GROUP", "COLOR", "PART", "SUB GROUP", "OP"]
+ANALYSES_ACC_HEAD = ["ANALYSIS", "RECORD", "PART", "STEP", "GROUP", "COLOR", "STG", "VALUE"]
+
+
+def analyses_export(db, path, lt=None, acc=None):
+   """Writes every saved analysis (or the given {name: definition} dicts)
+   to `path`.  Returns (lead time sets written, custom analyses written)."""
+   lt = lt_groups_load(db) if lt is None else lt
+   acc = acc_load(db) if acc is None else acc
+   wb, st = _xl_open()
+   ws = wb.active
+   ws.title = "READ ME"
+   for i, line in enumerate((
+         "WIP TRACKER - SAVED ANALYSES",
+         "Written %s" % datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
+         "",
+         "This file holds the analyses made in the program.  Keep it somewhere safe:",
+         "Import analyses (LEAD TIME ANALYSIS or CUSTOM ANALYSIS page) builds them again",
+         "from it, in this or in a new database.  It can also be edited or written by hand.",
+         "",
+         "Sheet '%s': one row per operation of a group." % ANALYSES_LT_SHEET,
+         "   ANALYSIS   the name of the set          GROUP   the group (TURN, MILL ...)",
+         "   COLOR      #RRGGBB (may be empty)        PART    the part number",
+         "   SUB GROUP  may be empty                  OP      the operation number",
+         "",
+         "Sheet '%s': one row per record." % ANALYSES_ACC_SHEET,
+         "   RECORD = PART    a part of the analysis: COLOR, STG, STEP = its START step",
+         "            STEP    a chosen step of a part (STEP, e.g. 280 or 280/3) and its GROUP",
+         "            GROUP   a board column - the rows are in board order",
+         "            TARGET  pieces per week (VALUE) of one STG",
+         "            OPTION  GROUP = show_rework (VALUE 1/0) or max_rows (VALUE a number)",
+         "",
+         "An analysis in the file REPLACES the one with the same name in the program."),
+         start=1):
+      ws.cell(row=i, column=1, value=line)
+   ws["A1"].font = st["Font"](bold=True, size=14)
+   ws.column_dimensions["A"].width = 100
+
+   w1 = wb.create_sheet(ANALYSES_LT_SHEET)
+   for i, h in enumerate(ANALYSES_LT_HEAD, start=1):
+      w1.cell(row=1, column=i, value=h)
+   _xl_head(w1, 1, len(ANALYSES_LT_HEAD), st)
+   r = 2
+   for name in sorted(lt, key=lambda x: x.upper()):
+      d = lt_groups_normalize(db, lt[name])
+      sub = {p["part_key"]: p["sub"] for p in d["parts"]}
+      order = {p["part_key"]: i for i, p in enumerate(d["parts"])}
+      for g in d["groups"]:
+         for pk in sorted(g["ops"], key=lambda k: order.get(k, 1 << 30)):
+            for op in g["ops"][pk]:
+               for c, v in enumerate((name, g["name"], g["color"], pk, sub.get(pk, ""), op),
+                                     start=1):
+                  w1.cell(row=r, column=c, value=v)
+               r += 1
+   _xl_autosize(w1)
+
+   w2 = wb.create_sheet(ANALYSES_ACC_SHEET)
+   for i, h in enumerate(ANALYSES_ACC_HEAD, start=1):
+      w2.cell(row=1, column=i, value=h)
+   _xl_head(w2, 1, len(ANALYSES_ACC_HEAD), st)
+   r = 2
+
+   def put(name, record, part="", step="", group="", color="", stg="", value=""):
+      nonlocal r
+      for c, v in enumerate((name, record, part, step, group, color, stg, value), start=1):
+         w2.cell(row=r, column=c, value=v)
+      r += 1
+   for name in sorted(acc, key=lambda x: x.upper()):
+      d = acc[name] or {}
+      for p in d.get("parts") or []:
+         put(name, "PART", p.get("part_key", ""), p.get("start", "") or "",
+             color=p.get("color", "") or "", stg=p.get("stg", "") or "")
+      for g in d.get("groups") or []:
+         put(name, "GROUP", group=g)
+      for sp in d.get("steps") or []:
+         put(name, "STEP", sp.get("part_key", ""), sp.get("step", "") or "",
+             group=sp.get("group", "") or "")
+      for stg, n in sorted((d.get("targets") or {}).items()):
+         put(name, "TARGET", stg=stg, value=n)
+      put(name, "OPTION", group="show_rework", value=1 if d.get("show_rework") else 0)
+      if d.get("max_rows"):
+         put(name, "OPTION", group="max_rows", value=d.get("max_rows"))
+   _xl_autosize(w2)
+   wb.save(path)
+   return len(lt), len(acc)
+
+
+def _analyses_rows(wb, sheet, head):
+   """[{heading: text}] of one sheet, by its headings (any column order)."""
+   if sheet not in wb.sheetnames:
+      return None
+   ws = wb[sheet]
+   rows = list(ws.iter_rows(values_only=True))
+   at = None
+   for i, row in enumerate(rows[:15]):
+      cells = [norm_text(c).replace("_", "") for c in row]
+      if norm_text(head[0]) in cells and norm_text(head[1]) in cells:
+         at = i
+         break
+   if at is None:
+      return []
+   names = {norm_text(c).replace("_", ""): j for j, c in enumerate(rows[at]) if c is not None}
+   col = {h: names.get(norm_text(h).replace("_", "")) for h in head}
+   out = []
+   for row in rows[at + 1:]:
+      d = {}
+      for h, j in col.items():
+         v = row[j] if (j is not None and j < len(row)) else None
+         d[h] = clean_str(v) if v is not None else ""
+      if any(d.values()):
+         out.append(d)
+   return out
+
+
+def analyses_import(path):
+   """Reads a workbook written by analyses_export (or by hand in the same
+   shape).  Returns {"lt": {name: definition}, "acc": {name: definition},
+   "notes": [what was skipped and why]} - nothing is saved here."""
+   import openpyxl
+   wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+   notes = []
+   lt, acc = {}, {}
+   try:
+      rows = _analyses_rows(wb, ANALYSES_LT_SHEET, ANALYSES_LT_HEAD)
+      if rows is None:
+         notes.append("no '%s' sheet" % ANALYSES_LT_SHEET)
+      for n, d in enumerate(rows or [], start=2):
+         name, grp = d["ANALYSIS"], d["GROUP"]
+         pk, op = norm_text(d["PART"]), op_key(d["OP"])
+         if not (name and grp and pk and op):
+            notes.append("%s row %d skipped: ANALYSIS, GROUP, PART and OP are needed"
+                         % (ANALYSES_LT_SHEET, n))
+            continue
+         a = lt.setdefault(name, {"parts": [], "groups": []})
+         part = next((p for p in a["parts"] if p["part_key"] == pk), None)
+         if part is None:
+            part = {"part_key": pk, "sub": ""}
+            a["parts"].append(part)
+         if d["SUB GROUP"]:
+            part["sub"] = d["SUB GROUP"]
+         g = next((x for x in a["groups"] if x["name"].upper() == grp.upper()), None)
+         if g is None:
+            col = d["COLOR"] if re.match(r"^#[0-9A-Fa-f]{6}$", d["COLOR"] or "") else \
+               LT_GROUP_COLORS[len(a["groups"]) % len(LT_GROUP_COLORS)]
+            g = {"name": grp, "color": col, "ops": {}}
+            a["groups"].append(g)
+         # an operation is in ONE group of a part: the later row wins
+         for other in a["groups"]:
+            if other is not g and op in other["ops"].get(pk, ()):
+               other["ops"][pk].remove(op)
+               notes.append("%s: op %s of %s is in two groups - kept in %s"
+                            % (name, op, pk, grp))
+         if op not in g["ops"].setdefault(pk, []):
+            g["ops"][pk].append(op)
+      for a in lt.values():
+         for g in a["groups"]:
+            g["ops"] = {pk: v for pk, v in g["ops"].items() if v}
+         a["groups"] = [g for g in a["groups"] if g["ops"]]
+
+      rows = _analyses_rows(wb, ANALYSES_ACC_SHEET, ANALYSES_ACC_HEAD)
+      if rows is None:
+         notes.append("no '%s' sheet" % ANALYSES_ACC_SHEET)
+      for n, d in enumerate(rows or [], start=2):
+         name, rec = d["ANALYSIS"], norm_text(d["RECORD"])
+         if not name or not rec:
+            notes.append("%s row %d skipped: ANALYSIS and RECORD are needed"
+                         % (ANALYSES_ACC_SHEET, n))
+            continue
+         a = acc.setdefault(name, {"parts": [], "steps": [], "groups": [], "targets": {},
+                                   "show_rework": False})
+         pk = norm_text(d["PART"])
+         step = step_key(*split_step(d["STEP"])) if d["STEP"] else ""
+         if rec == "PART" and pk:
+            if not any(p["part_key"] == pk for p in a["parts"]):
+               a["parts"].append({"part_key": pk,
+                                  "color": d["COLOR"] or ACC_COLORS[len(a["parts"]) % len(ACC_COLORS)],
+                                  "stg": d["STG"], "start": step})
+         elif rec == "STEP" and pk and step and d["GROUP"]:
+            a["steps"].append({"part_key": pk, "step": step, "group": d["GROUP"]})
+            if d["GROUP"] not in a["groups"]:
+               a["groups"].append(d["GROUP"])
+         elif rec == "GROUP" and d["GROUP"]:
+            if d["GROUP"] not in a["groups"]:
+               a["groups"].append(d["GROUP"])
+         elif rec == "TARGET" and d["STG"]:
+            a["targets"][d["STG"]] = parse_float(d["VALUE"])
+         elif rec == "OPTION":
+            opt = d["GROUP"].strip().lower()
+            if opt == "show_rework":
+               a["show_rework"] = norm_text(d["VALUE"]) not in ("", "0", "NO", "FALSE", "HAYIR")
+            elif opt == "max_rows":
+               try:
+                  a["max_rows"] = int(parse_float(d["VALUE"]))
+               except (TypeError, ValueError):
+                  pass
+         else:
+            notes.append("%s row %d skipped: not a complete %s record"
+                         % (ANALYSES_ACC_SHEET, n, d["RECORD"]))
+   finally:
+      wb.close()
+   return {"lt": lt, "acc": acc, "notes": notes}
+
+
+def analyses_save(db, found):
+   """Saves what analyses_import read; an analysis with the same name is
+   replaced.  Returns (lead time sets, custom analyses) saved."""
+   for name, d in found["lt"].items():
+      lt_groups_save(db, name, d)
+   for name, d in found["acc"].items():
+      acc_save(db, name, d)
+   return len(found["lt"]), len(found["acc"])
 
 
 def acc_check(definition, routes):

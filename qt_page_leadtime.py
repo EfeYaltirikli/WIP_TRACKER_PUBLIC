@@ -27,6 +27,7 @@ inside it, the serials seen inside it (all their records), or the serials
 SOLD inside it (all their records).  Shown in days; hours on request.
 """
 
+import datetime
 import math
 import re
 import traceback
@@ -46,7 +47,8 @@ from wip_core import (ALL, export_leadtime_to_excel, format_wf_hours, lead_time_
                       norm_text, time_mode_to_date_range, save_prefs)
 from qt_widgets import (ctx, ModuleCard, Card, Splitter, DataTable, FilterBar, Toggle, Seg, FlowLayout,
                         label, button, hbox, autofit_columns, KpiInline, ModuleGrid, page_layout,
-                        page_head, export_button, ZoomControl, serial_menu)
+                        page_head, export_button, ZoomControl, serial_menu, NoWheelCombo,
+                        analyses_export_dialog, analyses_import_dialog)
 from qt_theme import FONT
 
 # lead blue, cutting green, queue yellow - one set per theme
@@ -151,6 +153,8 @@ class ColumnChart(QWidget):
         fm = QFontMetrics(self.font_(8))
         left = fm.horizontalAdvance("%.2f" % top) + 12
         bottom = 8
+        if any(it.get("mark") for it in self.items):
+            bottom = int(22 * self.zoom)          # month marks under the axis
         if self.labels and self.items:
             bottom = max(fm.horizontalAdvance(str(it["label"])) for it in self.items) + 12
             bottom = min(bottom, int(70 * self.zoom))
@@ -247,6 +251,7 @@ class ColumnChart(QWidget):
                        "%.2f" % (top * g / 4.0))
         cut_c, queue_c = QColor(s_["cut"]), QColor(s_["queue"])
         every = 1
+        mark_x = -1000.0
         if self.labels:
             lh = QFontMetrics(fm_f).height()
             every = max(1, int(lh / max(1.0, pitch)) + (1 if pitch < lh else 0))
@@ -267,6 +272,15 @@ class ColumnChart(QWidget):
                 p.setBrush(Qt.NoBrush)
                 p.setPen(QPen(QColor(th["text"]), 1.2))
                 p.drawRect(QRectF(x - 1, plot.bottom() - ch - qh - 1, colw + 2, ch + qh + 1))
+            if it.get("mark"):
+                # where a month begins (the serials are in order of time)
+                p.setPen(QPen(QColor(th["muted"]), 1, Qt.DotLine))
+                p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom() + 5))
+                if x - mark_x >= 38 * self.zoom:      # room for the text
+                    mark_x = x
+                    p.setPen(QColor(th["muted"]))
+                    p.drawText(QRectF(x + 2, plot.bottom() + 3, 60, 16),
+                               Qt.AlignLeft | Qt.AlignVCenter, it["mark"])
             if self.labels and i % every == 0:
                 p.save()
                 p.translate(x + colw / 2.0, plot.bottom() + 6)
@@ -442,7 +456,9 @@ class GroupCard(QFrame):
                                   slot=lambda: ed.move_group(g, 1)),
                            button("×", icon_only=True, tip="Delete this group",
                                   slot=lambda: ed.remove_group(g)), spacing=6))
-        self.first, self.last = QComboBox(), QComboBox()
+        # NoWheelCombo: the wheel brushed over a card used to change its
+        # first / last operation - and with it which operations are in the group
+        self.first, self.last = NoWheelCombo(), NoWheelCombo()
         for cb in (self.first, self.last):
             cb.setMinimumWidth(80)
             cb.activated.connect(lambda _i: self._range_picked())
@@ -806,25 +822,34 @@ class GroupEditor(QDialog):
 
     # ---- 2  operations ----
     def fill_ops(self):
-        keep = {it.data(Qt.UserRole)["op"] for it in self.olist.selectedItems()}
-        top = self.olist.verticalScrollBar().value()
-        self.olist.clear()
+        """The current part's operations.  The same part again (an
+        operation was put into a group): the rows are UPDATED where they
+        stand - rebuilding the list threw it back to the top, and after
+        dragging something from far down one had to scroll all the way
+        back."""
         ops = self.ops(self.cur)
+        same = (getattr(self, "_shown_part", None) == self.cur
+                and self.olist.count() == len(ops))
+        if not same:
+            self.olist.clear()
         cells = []
         for i, o in enumerate(ops):
             g = self.group_of(self.cur, o["op"])
             d = {"op": o["op"], "desc": o["desc"], "color": g["color"] if g else None,
                  "group": (g["name"] or "?") if g else ""}
-            it = QListWidgetItem()
+            if same:
+                it = self.olist.item(i)
+            else:
+                it = QListWidgetItem()
+                self.olist.addItem(it)
+                seqs = ("  ·  sequences: %s" % ", ".join(o["steps"])) \
+                    if len(o["steps"]) > 1 else ""
+                it.setToolTip("op %s  %s%s\nmeasured from the end of op %s"
+                              % (o["op"], o["desc"], seqs, ops[i - 1]["op"] if i else o["op"]))
             it.setData(Qt.UserRole, d)
-            seqs = ("  ·  sequences: %s" % ", ".join(o["steps"])) if len(o["steps"]) > 1 else ""
-            it.setToolTip("op %s  %s%s\nmeasured from the end of op %s"
-                          % (o["op"], o["desc"], seqs, ops[i - 1]["op"] if i else o["op"]))
-            self.olist.addItem(it)
-            if o["op"] in keep:
-                it.setSelected(True)
             cells.append((o["op"], d["color"], d["group"]))
-        self.olist.verticalScrollBar().setValue(top)
+        self._shown_part = self.cur
+        self.olist.viewport().update()
         self.ribbon.set_cells(cells)
         if self.cur:
             self.ops_title.setText("Operations · %s" % self.part_name(self.cur))
@@ -1102,6 +1127,14 @@ class Page(QWidget):
         self.t_detail.setToolTip("The parts under each group / sub group, with their "
                                  "first and last operation.")
         sf.addWidget(self.t_detail)
+        # 2.3.0: the saved analyses as an Excel file, and back
+        b_exp = button("Export analyses", slot=lambda: analyses_export_dialog(self),
+                       tip="Every saved analysis (lead time and custom) into one Excel "
+                           "file - a copy that outlives the database.")
+        b_imp = button("Import analyses", slot=self.import_analyses,
+                       tip="Builds the analyses again from such an Excel file.")
+        sf.addWidget(b_exp)
+        sf.addWidget(b_imp)
         self.gcard.content_lay.addWidget(srow)
         self.gtable = DataTable()
         self.gtable.tiles = True
@@ -1121,6 +1154,12 @@ class Page(QWidget):
         outer.addWidget(self.grid2)
         self.pcard = ModuleCard("Route profile", "per operation")
         self.leg1 = legend_dots()
+        self.prof_by = Seg([("Operations", "ops"), ("Groups", "groups")], "ops")
+        self.prof_by.setToolTip("Operations: a column per operation of the part.\n"
+                                "Groups: a column per operation group of the analysis "
+                                "picked in Operation groups.")
+        self.prof_by.changed.connect(lambda _v: self.draw_charts())
+        self.pcard.add_extra(self.prof_by)
         self.pcard.add_extra(self.leg1)
         self.prof = ColumnChart(labels=True)
         self.prof.on_pick = self.pick_step_key
@@ -1131,6 +1170,15 @@ class Page(QWidget):
         self.b_whole = button("Whole route", tip="Back from the picked step to the whole route",
                               slot=lambda: self.pick_step(None))
         self.b_whole.hide()
+        # 2.3.0: the serials in order of time - which period's parts went quicker
+        self.ser_by = Seg([("Longest first", "lead"), ("By finish date", "finish"),
+                           ("By sale date", "sold")], "lead")
+        self.ser_by.setToolTip("Longest first: the slowest serial on the left.\n"
+                               "By finish date: in the order the serials closed their last "
+                               "operation.\nBy sale date: in the order they were sold "
+                               "(only sold serials).")
+        self.ser_by.changed.connect(lambda _v: self.draw_charts())
+        self.scard.add_extra(self.ser_by)
         self.scard.add_extra(self.b_whole)
         self.serc = ColumnChart(labels=False)
         self.serc.on_menu = lambda key, gpos: serial_menu(
@@ -1170,7 +1218,15 @@ class Page(QWidget):
 
     # ---- one step picked (a row of STEPS, a column of the profile) ----
     def pick_step_key(self, key):
-        self.pick_step(key)
+        """A column of the route profile: an operation (its index) or, with
+        the profile by groups, a group (its name)."""
+        if isinstance(key, tuple):
+            self.sel_group = None if key == self.sel_group else key
+            if self.sel_group is not None:
+                self.sel_step = None
+            self.draw_charts()
+        else:
+            self.pick_step(key)
 
     def pick_step(self, idx):
         if idx is not None and idx == self.sel_step:
@@ -1314,6 +1370,11 @@ class Page(QWidget):
             return
         self.fill_sets(dlg.result_name)
         self._set_picked(0)
+
+    def import_analyses(self):
+        if analyses_import_dialog(self):
+            self.fill_sets()
+            self.schedule()
 
     def delete_set(self):
         name = self.set_name()
@@ -1539,7 +1600,8 @@ class Page(QWidget):
         steps = data["steps"] if data else []
         if self.sel_step is not None and not (0 <= self.sel_step < len(steps)):
             self.sel_step = None
-        if not data:
+        by_groups = self.prof_by.get() == "groups"
+        if not data and not by_groups:
             self.prof.clear("pick a part")
 
         # the route, operation by operation
@@ -1553,10 +1615,29 @@ class Page(QWidget):
                                  "\nclick: this step's serials"
                                  % (s["to_op"], s["to_desc"] or "", f(s["avg_hours"]), u,
                                     f(s["cut_hours"]), f(s["queue_hours"]), s["n"])})
-        if data:
+        if by_groups:
+            # a column per operation group of the analysis picked on the right
+            items = []
+            for g in self.last["groups"] or []:
+                if g["avg_hours"] is None:
+                    continue
+                n_parts = len({p["part_key"] for p in g["parts"]})
+                items.append({"key": (g["name"], None, None), "label": g["name"],
+                              "cut": g["cut_hours"] or 0.0, "queue": g["queue_hours"] or 0.0,
+                              "tip": "%s\nlead %s %s  =  operation time %s + queue %s\n"
+                                     "%d serials · %d part(s)\nclick: this group's serials"
+                                     % (g["name"], f(g["avg_hours"]), u, f(g["cut_hours"]),
+                                        f(g["queue_hours"]), g["n"], n_parts)})
+            avg = (sum(it["cut"] + it["queue"] for it in items) / len(items)) if items else None
+            self.prof.picked = (self.sel_group[0], None, None) if self.sel_group else None
+            self.prof.set_data(items, unit, avg,
+                               "no operation groups - pick or make an analysis (New)")
+            self.pcard.set_sub("per operation group · %s" % (self.last["set"] or "no analysis"))
+        elif data:
             avg = (sum(it["cut"] + it["queue"] for it in items) / len(items)) if items else None
             self.prof.picked = self.sel_step
             self.prof.set_data(items, unit, avg, "no closed steps in this selection")
+            self.pcard.set_sub("per operation")
 
         # the serials: the whole route, the step picked, or a group's row
         names = data.get("serial_names", {}) if data else {}
@@ -1593,9 +1674,39 @@ class Page(QWidget):
                 names.get(r[0], r[0]), f(r[1]), u, f(r[2]), f(max(0.0, r[1] - r[2])))
             whole_avg = None
             self.b_whole.show()
-        rows.sort(key=lambda r: (-r[1], r[0]))
-        items = [{"key": r[0], "label": names.get(r[0], r[0]), "cut": r[2],
-                  "queue": max(0.0, r[1] - r[2]), "tip": tip(r)} for r in rows]
+        # the order: slowest first, or in time (when it finished / was sold)
+        by = self.ser_by.get()
+        when, order_txt, left_out = {}, "longest first", 0
+        if by != "lead":
+            fin = {sk: v[5].date() for sk, v in ((data or {}).get("route_serial") or {}).items()
+                   if len(v) > 5 and v[5] is not None}
+            try:
+                sold = ctx.db.sold_date_map()
+            except Exception:
+                sold = {}
+            when = sold if by == "sold" else fin
+            order_txt = "by sale date" if by == "sold" else "by finish date"
+            if by == "sold":
+                left_out = sum(1 for r in rows if r[0] not in when)
+                rows = [r for r in rows if r[0] in when]
+            rows.sort(key=lambda r: (r[0] not in when,
+                                     when.get(r[0]) or datetime.date.max, r[0]))
+        else:
+            rows.sort(key=lambda r: (-r[1], r[0]))
+        items, month = [], None
+        for r in rows:
+            it = {"key": r[0], "label": names.get(r[0], r[0]), "cut": r[2],
+                  "queue": max(0.0, r[1] - r[2]), "tip": tip(r)}
+            d = when.get(r[0])
+            if d is not None:
+                it["tip"] += "\n%s %s" % ("sold" if by == "sold" else "finished",
+                                           d.strftime("%d.%m.%Y"))
+                if (d.year, d.month) != month:      # the first serial of each month
+                    month = (d.year, d.month)
+                    it["mark"] = d.strftime("%m.%y")
+            elif by != "lead":
+                it["tip"] += "\n(no date)"
+            items.append(it)
         avg = (sum(r[1] for r in rows) / len(rows)) if rows else None
         if whole_avg is not None:
             avg = whole_avg                  # the same figure as LEAD at the top
@@ -1605,13 +1716,15 @@ class Page(QWidget):
                            else "no serials with a closed step")
         self.scard.title_lbl.setText(title)
         if rows:
-            lo, hi = rows[-1][1], rows[0][1]
             ends = ("op %s → op %s · " % (data.get("route_first"), data.get("route_last"))
                     if (picked is None and self.sel_step is None and data) else "")
-            self.scard.set_sub("%d serials · %s%s .. %s %s" % (len(rows), ends, f(lo), f(hi), u))
+            lo, hi = min(r[1] for r in rows), max(r[1] for r in rows)
+            self.scard.set_sub("%d serials · %s · %s%s .. %s %s%s"
+                               % (len(rows), order_txt, ends, f(lo), f(hi), u,
+                                  (" · %d not sold, left out" % left_out) if left_out else ""))
             # on the heading only - a tooltip on the whole card showed up
             # over the chart and fought with the columns' own
-            self.scard.title_lbl.setToolTip("Longest first · %s" % extra)
+            self.scard.title_lbl.setToolTip(extra)
         else:
             self.scard.set_sub(extra)
 

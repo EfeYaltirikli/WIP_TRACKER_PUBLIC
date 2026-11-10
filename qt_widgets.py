@@ -3308,6 +3308,85 @@ class SerialDetailDialog(QDialog):
         ctx.hooks["mrbscrap_load_serial"](self.serial_no)
 
 
+def analyses_export_dialog(parent):
+    """2.3.0: every saved analysis (lead time groups + custom) to one
+    Excel file the program can read back - see wip_core.analyses_export."""
+    from wip_core import analyses_export
+    import datetime as _dt
+    path, _x = QFileDialog.getSaveFileName(
+        parent, "Export analyses", "WIP_TRACKER_ANALYSES_%s.xlsx"
+        % _dt.date.today().strftime("%Y%m%d"), "Excel (*.xlsx)")
+    if not path:
+        return
+    try:
+        n_lt, n_acc = analyses_export(ctx.db, path)
+    except Exception as e:
+        QMessageBox.critical(parent, "Export analyses", "Could not write the file:\n%s" % e)
+        return
+    QMessageBox.information(
+        parent, "Export analyses",
+        "%d lead time analysis(es) and %d custom analysis(es) written to\n%s\n\n"
+        "Keep the file: Import analyses builds them again from it." % (n_lt, n_acc, path))
+
+
+def analyses_import_dialog(parent):
+    """Reads such a file and saves what is in it; an analysis with the same
+    name is replaced (asked first).  Returns True when something was saved."""
+    from wip_core import analyses_import, analyses_save, lt_groups_load, acc_load
+    if getattr(ctx.db, "read_only", False):
+        QMessageBox.warning(parent, "Import analyses", "The database is open read-only.")
+        return False
+    path, _x = QFileDialog.getOpenFileName(parent, "Import analyses", "",
+                                           "Excel (*.xlsx *.xlsm);;All files (*)")
+    if not path:
+        return False
+    try:
+        found = analyses_import(path)
+    except Exception as e:
+        QMessageBox.critical(parent, "Import analyses", "Could not read the file:\n%s" % e)
+        return False
+    if not found["lt"] and not found["acc"]:
+        QMessageBox.warning(parent, "Import analyses", "No analysis was found in the file.\n\n"
+                            + "\n".join(found["notes"][:12]))
+        return False
+    have_lt, have_acc = lt_groups_load(ctx.db), acc_load(ctx.db)
+    over = [n for n in found["lt"] if n in have_lt] + [n for n in found["acc"] if n in have_acc]
+    text = "In the file:\n"
+    if found["lt"]:
+        text += "  Lead time analyses: %s\n" % ", ".join(sorted(found["lt"]))
+    if found["acc"]:
+        text += "  Custom analyses: %s\n" % ", ".join(sorted(found["acc"]))
+    if over:
+        text += "\nThese exist already and will be REPLACED:\n  %s\n" % ", ".join(sorted(over))
+    if found["notes"]:
+        text += "\nNotes:\n  " + "\n  ".join(found["notes"][:10])
+        if len(found["notes"]) > 10:
+            text += "\n  ... and %d more" % (len(found["notes"]) - 10)
+    if QMessageBox.question(parent, "Import analyses", text + "\n\nImport them?") \
+            != QMessageBox.Yes:
+        return False
+    try:
+        analyses_save(ctx.db, found)
+    except Exception as e:
+        QMessageBox.critical(parent, "Import analyses", "Could not save: %s" % e)
+        return False
+    ctx.status("Imported %d lead time and %d custom analysis(es)."
+               % (len(found["lt"]), len(found["acc"])))
+    return True
+
+
+class NoWheelCombo(QComboBox):
+    """A list the mouse wheel does not change unless it has been clicked
+    open - a hand brushing the wheel over a form must not alter it."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def wheelEvent(self, ev):
+        ev.ignore()
+
+
 class ZoomControl(QWidget):
     """- / 100% / + for the tables of one page."""
 
