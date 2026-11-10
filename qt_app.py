@@ -45,7 +45,7 @@ SETTINGS = ("settings", "Settings", "qt_page_settings", "Data & Settings")
 # The version under the name in the header (from v75 on: 2.0.1).
 #   x.y.Z  small fixes          x.Y.0  a middle-sized update
 #   X.0.0  a full renewal (interface or logic)
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 
 
 def _for_pyinstaller():
@@ -143,7 +143,15 @@ class MainWindow(QMainWindow):
         self.setStatusBar(sb)
         self.status_lbl = QLabel("Ready.")
         self.sync_lbl = QLabel("")
+        # 2.2.0: the local copy of the shared data (wip_core, THE LOCAL COPY)
+        self.copy_lbl = QLabel("")
+        self.copy_state = None           # what copy_tick last saw: busy / ok / off
+        self.warm_wait = False           # the preparation waits for the copy
+        self.reload_wait = False         # so does the reload after somebody's update
+        self.copy_timer = QTimer(self)
+        self.copy_timer.timeout.connect(self.copy_tick)
         sb.addWidget(self.status_lbl, 1)
+        sb.addPermanentWidget(self.copy_lbl)
         sb.addPermanentWidget(self.sync_lbl)
         ctx.status = self.status_lbl.setText
         ctx.window = self
@@ -451,6 +459,13 @@ class MainWindow(QMainWindow):
         if self.warm is not None and self.warm.is_alive():
             return
         db = ctx.db
+        # 2.2.0: while the data is being copied to this computer the
+        # preparation waits for it - it then reads the copy, not the share
+        st = db._mirror
+        if st["enabled"] and st["busy"]:
+            self.warm_wait = True
+            return
+        self.warm_wait = False
         try:
             eng = ctx.home_engineer() or wip_core.ALL
             scope = wip_core.allowed_part_keys(db, eng, wip_core.ALL, [], db.merge_on("b1000"))
@@ -497,6 +512,68 @@ class MainWindow(QMainWindow):
         self.warm = threading.Thread(target=job, name="warm", daemon=True)
         self.warm.start()
         self.warm_check.start(400)
+
+    # ---- 2.2.0: the local copy ----
+    def copy_tick(self):
+        """Shows where the local copy stands and, the moment a new one is
+        ready, does what was waiting for it."""
+        try:
+            st = ctx.db._mirror
+        except Exception:
+            return
+        if not st["enabled"]:
+            self.copy_lbl.setText("")
+            return
+        now = "busy" if st["busy"] else ("ok" if st["ok"] else "off")
+        if now == "busy":
+            self.copy_lbl.setText("Local copy  %d%%   |" % st["pct"])
+        elif now == "ok":
+            self.copy_lbl.setText("Local copy ✓   |")
+        else:
+            self.copy_lbl.setText("Local copy –   |")
+        self.copy_lbl.setToolTip(ctx.db.mirror_text())
+        if now == self.copy_state:
+            return
+        was, self.copy_state = self.copy_state, now
+        if now == "busy":
+            return
+        # a copy was finished (ok) or given up on (off): go on either way
+        if self.reload_wait:
+            self.reload_wait = False
+            self.apply_data_change()
+        elif self.warm_wait:
+            self.start_warm()
+        if now == "ok" and was == "busy":
+            self.status_lbl.setText("The data is on this computer now - pages read it locally.")
+
+    def wait_copy(self, seconds=180):
+        """At start-up: the copy is made first (the window shows how far it
+        is) so the pages open from this computer, not from the share.  After
+        `seconds` the program carries on and the copy finishes behind it."""
+        st = ctx.db._mirror
+        if not (st["enabled"] and st["busy"]):
+            return
+        t0 = time.time()
+        ctx.busy(True, "Copying the data to this computer...")
+        try:
+            while st["busy"] and time.time() - t0 < seconds:
+                self.loading.show_msg("Copying the data to this computer...  %d%%" % st["pct"])
+                QApplication.processEvents(QEventLoop.ExcludeUserInputEvents)
+                time.sleep(0.05)
+        finally:
+            ctx.busy(False)
+        self.copy_tick()
+
+    def apply_data_change(self):
+        """The shared data changed (somebody's upload): everything worked
+        out from the old data is dropped and the pages are drawn again."""
+        wip_core.invalidate_caches()
+        ctx.db.forget_meta()
+        ctx.db.forget_reads()
+        self.start_warm()
+        self.reload_all_pages(redraw_current=True)
+        self.refresh_last_updated()
+        self.status_lbl.setText("Data reloaded - another user updated the shared database.")
 
     def _warm_done(self):
         if self.warm is not None and self.warm.is_alive():
@@ -603,18 +680,28 @@ class MainWindow(QMainWindow):
                 for p in self.pages:
                     if p is not None and hasattr(p, "annotations_changed"):
                         p.annotations_changed()
+            try:
+                ctx.db.mirror_check()            # 2.3.0: is the local copy still the data?
+                if self.warm is None or not self.warm.is_alive():
+                    ctx.db.flush_agg()           # summaries worked out since: one short write
+            except Exception:
+                pass
             v = ctx.db.data_version()
             if v != self.shared["version"]:
                 first = self.shared["version"] == 0
                 self.shared["version"] = v
                 if not first:
-                    wip_core.invalidate_caches()
-                    ctx.db.forget_meta()
-                    ctx.db.forget_reads()
-                    self.start_warm()
-                    self.reload_all_pages(redraw_current=True)
-                    self.refresh_last_updated()
-                    self.status_lbl.setText("Data reloaded - another user updated the shared database.")
+                    st = ctx.db.mirror_check()
+                    if st["enabled"] and st["busy"]:
+                        # 2.2.0: the new data is copied to this computer
+                        # first and the pages are drawn from the copy -
+                        # not twice, once slowly from the share
+                        self.reload_wait = True
+                        self.copy_state = None
+                        self.status_lbl.setText("Another user updated the shared database - "
+                                                "copying the new data to this computer...")
+                    else:
+                        self.apply_data_change()
             if getattr(ctx.db, "read_only", False):
                 self.sync_lbl.setText("READ ONLY - nothing you change here can be saved")
             else:
@@ -768,6 +855,12 @@ def launch():
     prefs = load_prefs()
     db_path = read_db_pointer() or prefs.get("db_path") or default_db_path()
     db = Database(db_path)
+    # 2.2.0: on a share the data is copied to this computer, in the
+    # background, from this moment (the sign-in window is up meanwhile)
+    try:
+        db.mirror_start()
+    except Exception:
+        traceback.print_exc()
     wip_core.apply_rules(db)
     set_windows_app_id()
     app = QApplication.instance() or QApplication(sys.argv)
@@ -794,8 +887,10 @@ def launch():
     # five minutes however busy the person was
     win.activity_filter = ActivityFilter(win)
     app.installEventFilter(win.activity_filter)
+    win.copy_timer.start(700)
     if not win.sign_in():
         return 0
+    win.wait_copy()
     win.show_page(win.page_index(prefs.get("qt_last_page", "rw")) if False else 0)
     t1 = QTimer(win); t1.timeout.connect(win.poll_shared); t1.start(8000)
     t2 = QTimer(win); t2.timeout.connect(win.check_idle); t2.start(5000)

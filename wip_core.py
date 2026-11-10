@@ -2152,6 +2152,303 @@ def flag_kind_in(kind, kinds):
     this rule lives, should it change."""
     return kind in kinds
 
+# ---------------------------------------------------------------------------
+#  THE LOCAL COPY  (2.2.0)
+# ---------------------------------------------------------------------------
+# The database sits in a shared folder, and every page read its big tables
+# from there: a page of the file per network round trip, hundreds of
+# thousands of them.  On the desktop the same program is quick.
+#
+# So the data is brought to this computer ONCE.  The whole file is copied
+# into ~/.rw_analysis/local_copy (one sequential read of the share - the
+# fastest thing a share can do), and from then on every SELECT that only
+# touches the big DATA tables is answered from the copy:
+#
+#     rw, ops, wf_part_data, shipment, discarded, parts, comp, wf_traveler
+#
+# These change only through an import, a deletion or a traveler / part
+# list edit, and every one of those moves data_version.  The copy carries
+# the data_version it was made at; when the shared one differs the copy is
+# switched off at once (reads go to the share again, exactly as before)
+# and a new one is made in the background.  Everything else - settings,
+# TECO / MRB records, notes, accounts, layouts, sessions - is small, can
+# change at any moment, and is ALWAYS read from the share.  Every write
+# goes to the share.
+#
+# A copy is never changed after it is made (a new one is a new file), so
+# it is opened immutable: no locks, no journal, and nobody reading it can
+# hold up somebody saving to the share.
+#
+# MAKING IT SAFELY.  A plain file copy while another program commits could
+# catch half a write.  So: the file's change counter is read, the journal
+# is checked to be idle, the file is copied, the journal and the counter
+# are checked again - any difference and it is copied again.  If the file
+# will not hold still, SQLite's own backup takes a consistent snapshot
+# instead.  The copy is then checked (quick_check) before it is trusted.
+MIRROR_TABLES = frozenset(("rw", "ops", "wf_part_data", "shipment", "discarded",
+                           "parts", "comp", "wf_traveler"))
+# Names that send a statement to the share whatever else is in it.
+MIRROR_NEVER = frozenset(("meta", "serial_flags", "user_note", "app_user", "layout",
+                          "layout_item", "agg_cache", "app_session", "sqlite_master",
+                          "sqlite_sequence", "sqlite_temp_master", "sess", "temp",
+                          "main", "pragma_table_info"))
+MIRROR_DIR = os.environ.get("WIP_LOCAL_COPY_DIR") or os.path.join(APP_DIR, "local_copy")
+_MIRROR_ROUTE = {}
+_MIRROR_FROM = re.compile(r"\b(?:from|join)\s+([a-z_][a-z0-9_.]*)")
+_MIRROR_WORD = re.compile(r"[a-z_][a-z0-9_]*")
+
+
+def mirror_routable(sql):
+   """May this statement be answered from the local copy?  Only a SELECT
+   whose every table is a mirrored one.  Anything not understood goes to
+   the share - being slow is the worst that can happen there."""
+   hit = _MIRROR_ROUTE.get(sql)
+   if hit is not None:
+      return hit
+   low = sql.lstrip().lower()
+   ok = False
+   if low.startswith("select"):
+      tabs = _MIRROR_FROM.findall(low)
+      if tabs and all(t in MIRROR_TABLES for t in tabs):
+         ok = not (set(_MIRROR_WORD.findall(low)) & MIRROR_NEVER)
+   if len(_MIRROR_ROUTE) > 4000:
+      _MIRROR_ROUTE.clear()
+   _MIRROR_ROUTE[sql] = ok
+   return ok
+
+
+class MirrorConn:
+   """The Database's connection: the share's own connection, with the
+   reads the local copy can answer sent there instead.  Everything else
+   (writes, commits, pragmas, the small tables) is the share's connection
+   untouched."""
+   __slots__ = ("_real", "_state", "_local", "_gen", "_db")
+
+   def __init__(self, real, db):
+      self._real = real
+      self._db = db
+      self._state = db.__dict__.setdefault("_mirror", mirror_state())
+      self._local = None
+      self._gen = -1
+
+   def _local_conn(self, st):
+      if self._gen != st["gen"]:
+         self._drop_local()
+         self._gen = st["gen"]
+         try:
+            import pathlib
+            uri = pathlib.Path(st["path"]).as_uri() + "?mode=ro&immutable=1"
+            c = sqlite3.connect(uri, uri=True, timeout=5)
+            c.row_factory = self._real.row_factory
+            for pragma in ("PRAGMA cache_size = -262144", "PRAGMA temp_store = MEMORY",
+                           "PRAGMA mmap_size = 1073741824"):
+               try:
+                  c.execute(pragma)
+               except sqlite3.Error:
+                  pass
+            try:
+               c.set_progress_handler(Database._progress_tick, 200000)
+            except Exception:
+               pass
+            self._local = c
+         except Exception as e:
+            st["ok"] = False
+            st["error"] = "could not open the local copy: %s" % e
+            self._local = None
+      return self._local
+
+   def _drop_local(self):
+      if self._local is not None:
+         try:
+            self._local.close()
+         except Exception:
+            pass
+         self._local = None
+
+   def execute(self, sql, params=()):
+      st = self._state
+      if st["ok"] and not self._real.in_transaction and mirror_routable(sql):
+         # The shared data version, as this copy last read it, is not the
+         # local copy's: somebody changed the data.  This read goes to the
+         # share; mirror_check makes the new copy.
+         # (st["live"] = the shared data version as last read, see get_meta)
+         if st["live"] is None or st["live"] == st["raw"]:
+            loc = self._local_conn(st)
+            if loc is not None:
+               try:
+                  cur = loc.execute(sql, params)
+                  st["hits"] += 1
+                  return cur
+               except sqlite3.Error as e:
+                  # never let the copy be the reason something fails
+                  st["ok"] = False
+                  st["error"] = "local copy: %s" % e
+      return self._real.execute(sql, params)
+
+   def close(self):
+      self._drop_local()
+      return self._real.close()
+
+   @property
+   def row_factory(self):
+      return self._real.row_factory
+
+   @row_factory.setter
+   def row_factory(self, v):
+      self._real.row_factory = v
+      if self._local is not None:
+         self._local.row_factory = v
+
+   def __getattr__(self, name):
+      return getattr(self._real, name)
+
+
+def mirror_state():
+   return {"enabled": False, "ok": False, "path": None, "raw": None, "live": None, "gen": 0,
+           "busy": False, "pct": 0, "msg": "", "error": "", "wgen": 0, "hits": 0,
+           "sync": False, "thread": None, "secs": None, "how": ""}
+
+
+def _mirror_counter(path):
+   """The file change counter in the database header (bytes 24-27): moves
+   on every committed write."""
+   with open(path, "rb") as f:
+      f.seek(24)
+      return f.read(4)
+
+
+def _mirror_journal_idle(path):
+   """No write is in flight: the rollback journal is absent or empty.
+   READ rather than asked for its size - a share may answer a size from
+   its directory cache."""
+   try:
+      with open(path + "-journal", "rb") as f:
+         return not f.read(1)
+   except FileNotFoundError:
+      return True
+   except OSError:
+      return False
+
+
+def _mirror_stamp(conn):
+   """What identifies the data a copy holds: the data version, and the
+   size marks of the big tables (a restored backup can carry an old
+   version number)."""
+   out = []
+   for sql in ("SELECT value FROM meta WHERE key='data_version'",
+               "SELECT value FROM meta WHERE key='last_upload_at'",
+               "SELECT MAX(id) FROM rw", "SELECT MAX(id) FROM ops",
+               "SELECT MAX(id) FROM shipment", "SELECT MAX(rowid) FROM wf_part_data",
+               "SELECT COUNT(*) FROM wf_traveler", "SELECT COUNT(*) FROM parts",
+               "SELECT COUNT(*) FROM comp"):
+      try:
+         r = conn.execute(sql).fetchone()
+         out.append(r[0] if r else None)
+      except sqlite3.Error:
+         out.append("?")
+   return out
+
+
+def _mirror_copy_file(src, dst, st):
+   size = max(1, os.path.getsize(src))
+   done = 0
+   with open(src, "rb") as fi, open(dst, "wb") as fo:
+      while True:
+         buf = fi.read(8 * 1024 * 1024)
+         if not buf:
+            break
+         fo.write(buf)
+         done += len(buf)
+         st["pct"] = min(99, int(done * 100 / size))
+   return done
+
+
+def mirror_make(shared_path, dst, st, wal=False):
+   """A consistent copy of the shared file at `dst`.  Returns how it was
+   made ("copy" / "backup"); raises when it could not be."""
+   if os.path.exists(dst):
+      os.remove(dst)
+   if not wal:
+      for _try in range(2):
+         # wait a moment for a write in flight to finish
+         for _w in range(40):
+            if _mirror_journal_idle(shared_path):
+               break
+            time.sleep(0.15)
+         try:
+            c1 = _mirror_counter(shared_path)
+            if not _mirror_journal_idle(shared_path):
+               continue
+            n = _mirror_copy_file(shared_path, dst, st)
+            idle = _mirror_journal_idle(shared_path)
+            c2 = _mirror_counter(shared_path)
+            if idle and c1 == c2 and n == os.path.getsize(shared_path):
+               return "copy"
+         except OSError:
+            pass
+         st["msg"] = "the shared file changed while it was copied - again"
+   if os.path.exists(dst):
+      os.remove(dst)
+   if wal:
+      # a local WAL file: SQLite's own backup, one step - a snapshot
+      src = sqlite3.connect(shared_path, timeout=30)
+      out = sqlite3.connect(dst)
+      try:
+         with out:
+            src.backup(out, pages=-1)
+      finally:
+         out.close()
+         src.close()
+      return "backup"
+   # THE FILE WOULD NOT HOLD STILL: copy it under a read lock.  While a
+   # reader holds the file no writer can change a single page of it (it
+   # waits, as it does for any long read) - so the copy is whole.  A hot
+   # journal is rolled back by SQLite before the lock is given.
+   src = sqlite3.connect(shared_path, timeout=60, isolation_level=None)
+   try:
+      src.execute("BEGIN")
+      src.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
+      _mirror_copy_file(shared_path, dst, st)
+      src.execute("ROLLBACK")
+   finally:
+      src.close()
+   return "locked copy"
+
+
+def _mirror_cleanup(base, keep=()):
+   """Old copies of this database are removed (one still open somewhere
+   simply stays until next time)."""
+   keep = {os.path.abspath(k) for k in keep if k}
+   try:
+      names = [n for n in os.listdir(MIRROR_DIR) if n.startswith(base)]
+   except OSError:
+      return
+   # the newest two are always left: the one in use and the one before it
+   for n in sorted(names)[:-2]:
+      p = os.path.abspath(os.path.join(MIRROR_DIR, n))
+      if p in keep:
+         continue
+      try:
+         os.remove(p)
+      except OSError:
+         pass
+
+
+def mirror_verify(path):
+   """(raw data version, stamp) of a finished copy; raises when it is not
+   a sound database."""
+   c = sqlite3.connect(path)
+   try:
+      c.execute("PRAGMA journal_mode = OFF")
+      r = c.execute("PRAGMA quick_check(1)").fetchone()
+      if not r or str(r[0]).lower() != "ok":
+         raise sqlite3.DatabaseError("quick_check: %s" % (r[0] if r else "?"))
+      st = _mirror_stamp(c)
+      return st[0], st
+   finally:
+      c.close()
+
+
 class Database:
    """
    All shared content lives here.  The file may sit on a network drive so
@@ -2173,6 +2470,10 @@ class Database:
            os.makedirs(folder, exist_ok=True)
        self.conn = sqlite3.connect(path, timeout=20)
        self.conn.row_factory = sqlite3.Row
+       # 2.2.0: reads of the big data tables may be answered from a copy
+       # on this computer - see THE LOCAL COPY above
+       self._mirror = mirror_state()
+       self.conn = MirrorConn(self.conn, self)
        # THE ONE PLACE THE READ CACHE IS THROWN AWAY.
        #
        # A few small lookups are answered from memory so that a database
@@ -2316,6 +2617,175 @@ class Database:
        if not self.read_only:
            self._heal_partdata()
        self._attach_sessions()
+       # the tests run every page of the suite through the local copy
+       if os.environ.get("WIP_LOCAL_COPY") == "test":
+           self.mirror_start(force=True, sync=True)
+
+   # -- the local copy (see THE LOCAL COPY above) ------------------------
+   def mirror_wanted(self, force=False):
+       """On a share, unless switched off (prefs "local_copy": false, or
+       WIP_LOCAL_COPY=0)."""
+       env = os.environ.get("WIP_LOCAL_COPY", "")
+       if env == "0":
+           return False
+       if force or env in ("1", "test"):
+           return True
+       try:
+           if load_prefs().get("local_copy") is False:
+               return False
+       except Exception:
+           pass
+       return bool(self.on_network)
+
+   def _mirror_base(self):
+       return "db_%s" % hashlib.sha1(
+           os.path.abspath(self.path).lower().encode("utf-8")).hexdigest()[:12]
+
+   def mirror_start(self, force=False, sync=False):
+       """Switches the local copy on: an existing copy of the same data is
+       used at once, otherwise one is made (in a background thread unless
+       sync).  Safe to call again."""
+       st = self._mirror
+       if not self.mirror_wanted(force):
+           return False
+       st["enabled"] = True
+       st["sync"] = bool(sync)
+       if st["ok"] or st["busy"]:
+           return True
+       try:
+           os.makedirs(MIRROR_DIR, exist_ok=True)
+       except OSError as e:
+           st["error"] = "no folder for the local copy: %s" % e
+           st["enabled"] = False
+           return False
+       if self._mirror_reuse():
+           return True
+       self._mirror_build(sync)
+       return True
+
+   def _mirror_reuse(self):
+       """A copy left by an earlier session that still holds exactly the
+       shared data: used as it is, nothing is copied."""
+       st = self._mirror
+       base = self._mirror_base()
+       try:
+           here = with_lock_retry(lambda: _mirror_stamp(self.conn._real), seconds=5.0)
+       except Exception:
+           return False
+       try:
+           names = sorted((n for n in os.listdir(MIRROR_DIR)
+                           if n.startswith(base) and n.endswith(".db")), reverse=True)
+       except OSError:
+           return False
+       for n in names:
+           p = os.path.join(MIRROR_DIR, n)
+           try:
+               c = sqlite3.connect(p)
+               try:
+                   there = _mirror_stamp(c)
+               finally:
+                   c.close()
+           except Exception:
+               continue
+           if there == here and "?" not in there:
+               st.update(path=p, raw=there[0], ok=True, how="kept", error="",
+                         gen=st["gen"] + 1, pct=100, msg="")
+               return True
+       return False
+
+   def _mirror_build(self, sync=False):
+       st = self._mirror
+       if st["busy"]:
+           return
+       st.update(busy=True, pct=0, msg="", error="")
+       wgen = st["wgen"]
+       shared, base = self.path, self._mirror_base()
+       wal = self.journal_mode == "wal"
+
+       def job():
+           t0 = time.time()
+           tmp = os.path.join(MIRROR_DIR, "%s.part" % base)
+           try:
+               need = os.path.getsize(shared)
+               try:
+                   import shutil
+                   free = shutil.disk_usage(MIRROR_DIR).free
+                   if free < need * 1.2 + 200 * 1024 * 1024:
+                       raise OSError("not enough room on this computer (%d MB free, "
+                                     "%d MB needed)" % (free >> 20, (need * 1.2) / 1048576))
+               except (AttributeError, ValueError):
+                   pass
+               how = mirror_make(shared, tmp, st, wal)
+               raw, _stamp = mirror_verify(tmp)
+               final = os.path.join(MIRROR_DIR, "%s_%s.db" % (
+                   base, datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")))
+               os.replace(tmp, final)
+               if st["wgen"] != wgen:
+                   # this copy of the program wrote to the data meanwhile
+                   raise RuntimeError("the data changed while it was copied")
+               old = st["path"]
+               st.update(path=final, raw=raw, how=how, gen=st["gen"] + 1,
+                         secs=time.time() - t0, pct=100, ok=True)
+               _mirror_cleanup(base, keep=(final, old))
+           except Exception as e:
+               st["error"] = str(e)[:200]
+               try:
+                   if os.path.exists(tmp):
+                       os.remove(tmp)
+               except OSError:
+                   pass
+           finally:
+               st["busy"] = False
+
+       if sync:
+           job()
+       else:
+           th = threading.Thread(target=job, name="local-copy", daemon=True)
+           st["thread"] = th
+           th.start()
+
+   def mirror_check(self):
+       """Called now and then (the window's shared-data check, and after
+       this copy's own changes): a copy that no longer holds the shared
+       data is switched off and a new one started.  Returns the state."""
+       st = self._mirror
+       if not st["enabled"]:
+           return st
+       if st["ok"]:
+           try:
+               r = self.conn._real.execute(
+                   "SELECT value FROM meta WHERE key='data_version'").fetchone()
+               st["live"] = r[0] if r else None
+               if st["live"] != st["raw"]:
+                   st["ok"] = False
+           except sqlite3.Error:
+               return st                 # somebody is writing: ask again later
+       if (not st["ok"] and not st["busy"] and not getattr(self, "_in_txn", False)
+               and not self.conn._real.in_transaction):
+           if not self._mirror_reuse():
+               self._mirror_build(st["sync"])
+       return st
+
+   def mirror_off(self):
+       """This copy of the program is changing the data: its local copy
+       is out of date from this moment."""
+       st = self._mirror
+       st["wgen"] += 1
+       st["ok"] = False
+       st["live"] = None          # the version is about to move: read again
+
+   def mirror_text(self):
+       """One line for the status bar, '' when there is nothing to say."""
+       st = self._mirror
+       if not st["enabled"]:
+           return ""
+       if st["busy"]:
+           return "Copying the data to this computer  %d%%" % st["pct"]
+       if st["ok"]:
+           return "Data is read from this computer (local copy)"
+       if st["error"]:
+           return "Local copy not available: %s" % st["error"]
+       return "Local copy is being refreshed"
 
    def _heal_partdata(self):
        """2.1.4: an import whose waterfall rebuild never finished (see
@@ -2530,15 +3000,27 @@ class Database:
        up = text.upper()
        for verb, after in (("INSERT INTO", 11), ("REPLACE INTO", 12),
                            ("INSERT OR REPLACE INTO", 22),
+                           ("INSERT OR IGNORE INTO", 21),
+                           ("UPDATE OR IGNORE", 16),
                            ("DELETE FROM", 11), ("UPDATE", 6)):
            if up.startswith(verb):
                table = text[after:].strip().split(None, 1)[0].strip("`\"[]();")
                break
+       # 2.2.0: a change to a mirrored table (or anything this cannot name:
+       # a schema change, a script) makes this copy's local copy out of date
+       tl = table.lower()
+       if not table or tl in MIRROR_TABLES or (tl not in MIRROR_NEVER
+                                                and "." not in tl):
+           st = self.__dict__.get("_mirror")
+           if st is not None and st["enabled"]:
+               st["wgen"] += 1
+               st["ok"] = False
        if table and table.lower() not in self._CACHED_TABLES:
            if up.startswith(self._WRITE_HEADS):
                return
        self._read_cache = {}
        self._meta_cache = None
+       self.__dict__["_live_meta"] = {}
        # A write to a DATA table from this copy: the stored summaries
        # (_agg) may be stale until the data version moves, so this copy
        # stops trusting them and works each one out again (v66).
@@ -2880,6 +3362,12 @@ class Database:
        when it sees this move, so it must only be used for changes that
        really do alter what an analysis would produce."""
        self.set_meta("data_version", (self.data_version() or 0) + 1)
+       # 2.2.0: the local copy holds the data as it was before this change
+       st = self.__dict__.get("_mirror")
+       if st is not None and st["enabled"]:
+           self.mirror_off()
+           if st["sync"]:
+               self.mirror_check()
 
    def note_upload(self):
        """Stamps when data was last UPLOADED (v67) - what the header's
@@ -2950,9 +3438,12 @@ class Database:
    LIVE_META = ("data_version", "annotation_version", "settings_version",
                 "maintenance")
 
+   LIVE_TTL = 1.0
+
    def forget_meta(self):
        """Read the settings from the file again on the next ask."""
        self._meta_cache = None
+       self.__dict__["_live_meta"] = {}
 
    def _meta_all(self):
        if self._meta_cache is None:
@@ -3001,9 +3492,26 @@ class Database:
 
    def get_meta(self, key, default=None):
        if key in self.LIVE_META:
-           r = self.conn.execute(
-               "SELECT value FROM meta WHERE key=?", (key,)).fetchone()
-           raw = r["value"] if r else None
+           # 2.2.0: ON A SHARE the answer is kept for a second.  These are
+           # asked for constantly - every cached figure checks the data
+           # version before it is handed out, hundreds of times while one
+           # page is drawn - and each ask was a round trip to the share.
+           # Another person's change is still seen within the second (the
+           # window itself only looks every eight); this copy's own
+           # changes clear it at once (_on_statement, forget_meta).
+           live = self.__dict__.setdefault("_live_meta", {})
+           hit = live.get(key)
+           now = time.time()
+           if hit is not None and now - hit[0] < self.LIVE_TTL and self.on_network:
+               raw = hit[1]
+           else:
+               r = self.conn.execute(
+                   "SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+               raw = r["value"] if r else None
+               live[key] = (now, raw)
+               if key == "data_version":
+                   # what the local copy is checked against (MirrorConn)
+                   self._mirror["live"] = raw
        else:
            raw = self._meta_all().get(key)
        if raw is None:
@@ -3140,7 +3648,11 @@ class Database:
        if not found:
            value = compute()
            mem[key] = (ver, value)
-           if self.__dict__.get("_reader") or not self._agg_store(key, ver, value):
+           # 2.2.0: with the local copy on, working a summary out is quick
+           # and a write to the share is the slow part - so it is not
+           # stored now but with the others, in one write (flush_agg)
+           if (self.__dict__.get("_reader") or self._mirror["ok"]
+                   or not self._agg_store(key, ver, value)):
                # a background copy (v72) or a busy file: stored later
                self.__dict__.setdefault("_agg_unsaved", set()).add(key)
            return value
@@ -3222,6 +3734,9 @@ class Database:
    def open_reader(self):
        self.conn = sqlite3.connect(self.path, timeout=20)
        self.conn.row_factory = sqlite3.Row
+       # the background work reads the big tables from the local copy too
+       # (its own connection to it - a connection belongs to one thread)
+       self.conn = MirrorConn(self.conn, self)
        for pragma in ("PRAGMA busy_timeout = 1500", "PRAGMA cache_size = -131072",
                       "PRAGMA query_only = 1"):
            try:

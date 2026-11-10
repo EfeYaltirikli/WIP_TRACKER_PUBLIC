@@ -1,4 +1,4 @@
-WIP TRACKER 2.2.0 - YENI TASARIM (Qt / PySide6)
+WIP TRACKER 2.3.0 - YENI TASARIM (Qt / PySide6)
 =============================================
 
 Bu surum ekranlari bastan yeni tasarimla (Qt) kurar.  Veri, hesaplar ve
@@ -76,6 +76,46 @@ eski surumle yan yana calisabilir.
   qt_page_acc.py       Custom Analysis
   qt_page_settings.py  Data & Settings (ADMIN bolumu yalniz admin/co-admin)
 
+
+============================================================
+2.3.0  -  HIZ: VERI BU BILGISAYARA KOPYALANIR (YEREL KOPYA)
+============================================================
+
+  - SORUN: veritabani ortak alanda dururken program her sayfada buyuk
+    tablolari agdan okuyordu (dosyanin her sayfasi ayri bir ag gidis
+    gelisi) - masaustunde hizli, ortak alanda cok yavas.
+  - COZUM: program acilirken ortak dosya BIR KEZ bu bilgisayara
+    kopyalanir (C:\Users\<siz>\.rw_analysis\local_copy) ve buyuk veri
+    tablolarinin (uretim, rework, waterfall, sevkiyat, parca listesi,
+    COMP, traveler) TUM okumalari bu kopyadan yapilir.  Acilista
+    "Copying the data to this computer... %" yazar; bittiginde sag altta
+    "Local copy ✓" gorunur.
+      * Veri degismediyse sonraki acilislarda kopyalama YAPILMAZ, ayni
+        kopya kullanilir - program hemen acilir.
+      * Biri veri yukleyince (ya da traveler / parca listesi degisince)
+        program bunu fark eder, yeni veriyi arka planda yeniden kopyalar
+        ve sayfalari kopya hazir olunca yeniler.  O arada eski kopya
+        KULLANILMAZ.
+      * Ayarlar, TECO / MRB / SCRAP kayitlari, notlar, hesaplar, yerlesim
+        her zaman ortak dosyadan okunur - baskasinin yaptigi degisiklik
+        eskisi gibi hemen gorunur.  Tum yazmalar ortak dosyaya gider.
+      * Kopya, yazilirken alinmis yarim bir dosya olmasin diye kontrol
+        edilerek alinir ve kullanilmadan once saglamlik testinden gecer.
+        Kopyada bir sorun olursa program hata vermez, ortak dosyadan
+        okumaya doner (eskisi gibi yavas ama dogru).
+  - GEREKEN: bu bilgisayarda veritabani dosyasi kadar bos yer (dosya
+    500 MB ise ~600 MB).  Eski kopyalar kendiliginden silinir.
+  - KAPATMAK ICIN (gerekirse): Windows ortam degiskeni WIP_LOCAL_COPY=0.
+    Veritabani zaten bu bilgisayardaysa kopya hic yapilmaz.
+  - Ayrica: ortak dosyaya yazilan ozetler tek tek degil toplu yazilir;
+    veri surumu sorgusu ag uzerinde saniyede bir kez yapilir.
+  - ONERI: "WIP TRACKER" klasorunun (exe) kendisi de ortak alandaysa
+    programin ACILISI yine yavas olur (yuzlerce dosya agdan yuklenir).
+    Exe klasorunu her bilgisayara kopyalayin; veritabani ortak alanda
+    kalsin.
+  - Yeni testler: tests/test_local_copy.py (kopya ile ortak dosya
+    sonuclari birebir ayni, veri degisince kopya birakilir, yazilirken
+    alinan kopya saglam), tests/test_qt_smoke.py (her sayfa acilir).
 
 ============================================================
 2.2.0  -  LEAD TIME ANALYSIS SAYFASI, OPERASYON GRUPLARI, 0600 = 600
