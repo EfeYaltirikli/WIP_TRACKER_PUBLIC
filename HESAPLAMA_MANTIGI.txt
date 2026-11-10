@@ -480,7 +480,13 @@ Waterfall'daki AVG LEAD tarih filtresine bakmaz, her zaman tum zamandir.
 TUM ROTA (2.3.0) - sayfanin ustundeki LEAD / OP. TIME / QUEUE / FLOW EFF.
 ve "Serials - whole route" grafigi:
     Bir serinin toplam lead time'i = rotanin SON operasyonunun X'i -
-        ILK operasyonunun tamamlanmasi (X'i; X'siz gecildiyse son girisi).
+        BASLANGIC.
+        BASLANGIC = ILK operasyonun X'i (kapanmis ve uzerine zaman
+        girilmisse).  Ilk operasyon kapanmamissa, hic girisi yoksa ya da
+        sifir zamanla kapanmissa: o seriye yapilan EN ERKEN zaman girisi
+        (hangi operasyonda olursa olsun, her turlu giris).
+        Bu durumda operation time'a ilk operasyonun isi de girer (sure
+        onun baslangicindan olculdugu icin).
         Arada ne oldugu onemli degil (X'siz gecilen, aykiri adim).
         Son operasyonu X ile kapanmamis seri girmez.
     OPERATION TIME = ilk operasyondan SONRAKI tum operasyonlarin isi.

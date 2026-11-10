@@ -8410,7 +8410,9 @@ def lead_entries(db, part_key, d1, d2, serial_keys=None,
 # made of, each from the operation before it:
 #
 #     route 1 2 3 4 5 6 7,   groups {1,2,3} {4,5} {6,7}
-#     {1,2,3}  completion of 1  ->  X of 3     (nothing comes before 1)
+#     {1,2,3}  X of 1  ->  X of 3     (nothing comes before 1; when 1 is
+#              not closed or carries no time: from the serial's EARLIEST
+#              entry - lead_route_start)
 #     {4,5}    completion of 3  ->  X of 5
 #     {6,7}    completion of 5  ->  X of 7
 #
@@ -8578,7 +8580,21 @@ def lead_group_values(route_ops, entries_by_serial, chosen):
       total = cut = 0.0
       for a, b in runs:
          ref, first = lt_run_bounds(a, b)
-         hrs = lead_gap_hours(recs[ref][0], recs[b][0])
+         if a == 0:
+            # THE ROUTE'S START (2.3.0, as lead_route_start): the first
+            # operation's X; not closed / no time on it -> the serial's
+            # earliest entry, and then the first operation's own work
+            # is inside the stretch
+            r0 = recs[0][0]
+            end = lead_x_dt(recs[b][0])
+            start = lead_x_dt(r0) if lead_has_time(r0) else None
+            if start is None:
+               start = lead_route_start(entries, None)[0]
+               first = 0
+            hrs = (None if (start is None or end is None)
+                   else (end - start).total_seconds() / 3600.0)
+         else:
+            hrs = lead_gap_hours(recs[ref][0], recs[b][0])
          if hrs is None:
             total = None
             break
@@ -8781,23 +8797,32 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
    finished, names = set(), {}
    # THE WHOLE ROUTE, END TO END (2.3.0), per serial - the same rule as
    # the waterfall's AVG LEAD (WFAnalyzer.whole_route_lead):
-   #     X of the LAST operation  minus  completion of the FIRST
+   #     X of the LAST operation  minus  the START (lead_route_start: the
+   #     first operation's X, else the serial's earliest entry)
    # whatever happened in between (a step passed without an X, a far-off
    # step).  Adding the steps up lost exactly those.  Operation time: the
    # work of every operation after the first.
-   route_serial = {}                 # serial key -> [lead, operation time, kept]
+   # serial key -> [lead, operation time, kept, step it starts at, True
+   #                when that is the first operation's X]
+   route_serial = {}
    for sk, entries in by_serial.items():
        if lead_x_dt(entries.get(rsteps[-1])) is not None:
            finished.add(sk)
            if len(rsteps) > 1:
-               whole = lead_gap_hours(entries.get(rsteps[0]), entries.get(rsteps[-1]))
+               # the start: the first operation's X, else the serial's
+               # earliest entry (lead_route_start)
+               t0, st0, from_x = lead_route_start(entries, rsteps[0])
+               whole = (None if t0 is None else
+                        (lead_x_dt(entries[rsteps[-1]]) - t0).total_seconds() / 3600.0)
                if whole is not None and whole >= 0:
+                   # measured from the first operation's END its own work
+                   # is not in the stretch; from the first ENTRY it is
                    work = 0.0
-                   for st_ in rsteps[1:]:
+                   for st_ in (rsteps[1:] if from_x else rsteps):
                        rec_ = entries.get(st_)
                        if rec_ is not None:
                            work += lead_cut_hours(rec_)
-                   route_serial[sk] = [whole, min(work, whole), True]
+                   route_serial[sk] = [whole, min(work, whole), True, st0, from_x]
        for r in entries.values():
            names[sk] = r.get("serial") or sk
            break
@@ -10625,6 +10650,40 @@ def lead_gap_hours(prev_rec, rec):
    return (end - start).total_seconds() / 3600.0
 
 
+def lead_has_time(rec):
+   """Was any time booked on this operation at all (machine or labour)?"""
+   return bool(rec) and ((rec.get("machine_hour") or 0.0) > 0
+                         or (rec.get("labour_hour") or 0.0) > 0
+                         or (rec.get("labour") or 0.0) > 0)
+
+
+def lead_route_start(entries, first_step):
+   """WHERE A SERIAL'S WHOLE-ROUTE LEAD TIME STARTS  (2.3.0)
+
+       the X of the route's FIRST operation, when that operation is
+       closed and time was booked on it;
+
+       otherwise (not closed, never booked, or closed with zero time)
+       the EARLIEST time entry made on the serial, on whatever operation
+       it was - some entry always exists.
+
+   `entries` is {step key: record} of the serial.  Returns
+   (when, step it is taken from, True when it is the first operation's X)
+   - (None, None, False) for a serial with no entry at all."""
+   r0 = entries.get(first_step)
+   x0 = lead_x_dt(r0)
+   if x0 is not None and lead_has_time(r0):
+      return x0, first_step, True
+   best_t, best_st = None, None
+   for st, r in entries.items():
+      if r is None:
+         continue
+      t = r.get("dt_first") or r.get("dt")
+      if t is not None and (best_t is None or t < best_t):
+         best_t, best_st = t, st
+   return best_t, best_st, False
+
+
 def lead_keep_mask(values):
    """[True/False] per value: kept unless negative or more than
    LEAD_OUTLIER_X times the median of the non-negative ones (the median
@@ -11138,7 +11197,10 @@ class WFAnalyzer:
                done.append(last)
            stamps.append((recs, xs, done))
            # whole_route_lead reads the same stamps
-           row["_lead_xs"], row["_lead_done0"] = xs, (lead_done_dt(recs[0]) if recs else None)
+           # 2.3.0: the start is the first operation's X, else the serial's
+           # earliest entry (lead_route_start) - the same as the lead time page
+           row["_lead_xs"], row["_lead_done0"] = xs, (
+               lead_route_start(row["opmap"], route_step(route[0]))[0] if recs else None)
        for d in defs:
            ep, sp = d["end_pos"], d["start_pos"]
            gaps = []
@@ -11196,8 +11258,9 @@ class WFAnalyzer:
 
            the X of the LAST operation of the route
            minus
-           the completion of the FIRST operation - its X, or its last
-           entry when it was passed without one
+           the START: the X of the FIRST operation; when that one is
+           not closed, was never booked or carries no time, the earliest
+           time entry made on the serial (2.3.0, lead_route_start)
 
        in plain clock hours.  Negative and far-off figures are left out
        (lead_keep_mask).
@@ -11224,7 +11287,7 @@ class WFAnalyzer:
            xs = row.get("_lead_xs")
            if xs is None or len(xs) != len(route):
                xs = [lead_x_dt(opmap.get(st)) for st in steps]
-               start = lead_done_dt(opmap.get(first_step))
+               start = lead_route_start(opmap, first_step)[0]
            else:
                start = row.get("_lead_done0")
            if start is None:

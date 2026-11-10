@@ -113,6 +113,15 @@ eski surumle yan yana calisabilir.
     Ortalamaya, medyanin 3 katini asan seriler girmez (grafikte
     gorunur, ustune gelince yazar).  "Finished only" dugmesi kalkti.
     Steps tablosu ve Route profile adim bazinda, degismedi.
+  - ROTANIN BASLANGICI: toplam lead time'da baslangic, ILK operasyonun
+    X'idir.  Ilk operasyon KAPANMAMISSA, hic giris yoksa ya da sifir
+    zaman girilmisse: o seri numarasina yapilan EN ERKEN zaman girisi
+    (hangi operasyonda olursa olsun) baslangic sayilir.  Boylece ilk
+    operasyonu eksik olan seriler de toplam lead time'a girer.
+    Lead Time sayfasi (ust kutular, Serials - whole route, ilk
+    operasyonla baslayan gruplar) ve Waterfall AVG LEAD ayni kurali
+    kullanir.  Onceden ilk operasyonu X'siz olan seride o operasyonun
+    SON girisi aliniyor, hic girisi olmayan seri sayilmiyordu.
   - KOPYA NEREDE: Masaustunde "WIP TRACKER LOCAL COPY" klasoru; program
     kendisi olusturur, icinde ne oldugunu anlatan bir not dosyasi vardir.
     Program kapaninca kopya SILINMEZ (sonraki acilis hizli olsun diye).
