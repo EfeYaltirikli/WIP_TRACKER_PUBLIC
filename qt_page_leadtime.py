@@ -31,7 +31,7 @@ import math
 import re
 import traceback
 
-from PySide6.QtCore import Qt, QTimer, QRect, QRectF, QPointF, QSize
+from PySide6.QtCore import Qt, QTimer, QRect, QRectF, QPointF, QSize, QEvent
 from PySide6.QtGui import QColor, QPainter, QPen, QFont, QFontMetrics, QCursor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QFileDialog,
                                QComboBox, QLineEdit, QDialog, QScrollArea, QFrame,
@@ -180,8 +180,23 @@ class ColumnChart(QWidget):
         else:
             QToolTip.hideText()
 
+    def event(self, ev):
+        # The hover text is this widget's own business (mouseMoveEvent
+        # shows it, column by column).  Left alone, Qt's tooltip request
+        # went on to the card behind the chart, and the card's own tooltip
+        # kept replacing the column's - the two took turns.
+        if ev.type() == QEvent.ToolTip:
+            i = self.index_at(ev.pos().x())
+            if i >= 0 and self.items[i].get("tip"):
+                QToolTip.showText(ev.globalPos(), self.items[i]["tip"], self)
+            else:
+                QToolTip.hideText()
+            return True
+        return super().event(ev)
+
     def leaveEvent(self, ev):
         self.hover = -1
+        QToolTip.hideText()
         self.update()
 
     def mousePressEvent(self, ev):
@@ -376,6 +391,11 @@ class RouteRibbon(QWidget):
             i = max(0, min(n - 1, int(ev.position().x() * n / max(1, self.width()))))
             op, _c, g = self.cells[i]
             QToolTip.showText(QCursor.pos(), "op %s%s" % (op, ("  ·  " + g) if g else ""), self)
+
+    def event(self, ev):
+        if ev.type() == QEvent.ToolTip:          # shown by mouseMoveEvent
+            return True
+        return super().event(ev)
 
     def paintEvent(self, ev):
         p = QPainter(self)
@@ -1589,7 +1609,9 @@ class Page(QWidget):
             ends = ("op %s → op %s · " % (data.get("route_first"), data.get("route_last"))
                     if (picked is None and self.sel_step is None and data) else "")
             self.scard.set_sub("%d serials · %s%s .. %s %s" % (len(rows), ends, f(lo), f(hi), u))
-            self.scard.setToolTip("Longest first · %s" % extra)
+            # on the heading only - a tooltip on the whole card showed up
+            # over the chart and fought with the columns' own
+            self.scard.title_lbl.setToolTip("Longest first · %s" % extra)
         else:
             self.scard.set_sub(extra)
 
