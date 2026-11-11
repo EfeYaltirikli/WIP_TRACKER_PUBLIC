@@ -16,6 +16,32 @@ import threading
 import time
 import traceback
 
+
+def _pyside_plugins_first():
+    """2.4.0: point Qt at PySide6's OWN plugins before anything starts.
+
+    An environment that also carries Qt5 (Spyder / Anaconda: PyQt5 with a
+    bin/qt.conf) sends PySide6 to the Qt5 plugin folder, where it finds no
+    platform plugin ("cocoa" / "windows") and the program closes before a
+    window opens.  A built program (PyInstaller) sets its own path and is
+    left alone, and so is a path the user set by hand."""
+    if getattr(sys, "frozen", False) or os.environ.get("QT_PLUGIN_PATH"):
+        return
+    try:
+        import importlib.util
+        spec = importlib.util.find_spec("PySide6")
+        if spec is None or not spec.origin:
+            return
+        plugins = os.path.join(os.path.dirname(spec.origin), "Qt", "plugins")
+        if os.path.isdir(os.path.join(plugins, "platforms")):
+            os.environ["QT_PLUGIN_PATH"] = plugins
+            os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = os.path.join(plugins, "platforms")
+    except Exception:
+        pass
+
+
+_pyside_plugins_first()
+
 from PySide6.QtCore import Qt, QTimer, QEvent, QObject, QEventLoop
 from PySide6.QtGui import QIcon, QAction, QCursor
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout,
