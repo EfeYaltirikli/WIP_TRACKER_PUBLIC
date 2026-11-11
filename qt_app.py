@@ -45,7 +45,7 @@ SETTINGS = ("settings", "Settings", "qt_page_settings", "Data & Settings")
 # The version under the name in the header (from v75 on: 2.0.1).
 #   x.y.Z  small fixes          x.Y.0  a middle-sized update
 #   X.0.0  a full renewal (interface or logic)
-VERSION = "2.3.0"
+VERSION = "2.4.0"
 
 
 def _for_pyinstaller():

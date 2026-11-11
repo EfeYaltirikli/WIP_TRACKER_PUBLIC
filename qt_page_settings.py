@@ -30,6 +30,7 @@ import wip_core
 from wip_core import (DATASET_LABEL, DATASET_ORDER, UPLOAD_ROWS, MAPPING_VERSION, FIELD_SETS,
                       SAP_COLUMNS, WEEKDAY_NAMES, DB_NAME, DUPLICATE_RULE_TEXT, ROLE_TITLE,
                       Database, WFAnalyzer, auto_map, detect_dataset, apply_rules, data_health,
+                      data_accuracy,
                       default_db_path, fmt_hour, guess_column, index_col, read_rules, save_rules,
                       invalidate_caches, iso_year_week, list_sheets, read_table, sap_read,
                       save_prefs, read_flags, sniff_header_row, week_bounds, week_offset,
@@ -1200,6 +1201,25 @@ class Page(QWidget):
         except Exception as e:
             self.health_box.addWidget(label("could not be checked: %s" % e, muted=True))
             return
+        self._health_rows(checks)
+        # 2.4.0: the bookings themselves - read over every part, on request
+        self.acc_btn = button("Check the bookings", slot=self.run_accuracy,
+                              tip="X with too few hours, late entries, steps passed with "
+                                  "no entry, bookings typed in late.")
+        self.health_box.addWidget(hbox(self.acc_btn, None))
+
+    def run_accuracy(self):
+        self.acc_btn.setEnabled(False)
+        self.acc_btn.setText("Checking...")
+        QApplication.processEvents()
+        try:
+            checks = data_accuracy(ctx.db)
+        except Exception as e:
+            checks = [{"level": "bad", "title": "BOOKINGS", "detail": str(e), "rows": []}]
+        self.acc_btn.setParent(None)
+        self._health_rows(checks)
+
+    def _health_rows(self, checks):
         colors = {"ok": "#3FB86A", "warn": "#E6B53C", "bad": "#E05252"}
         for c in checks:
             row = QWidget()
@@ -1242,7 +1262,13 @@ class Page(QWidget):
         self.tol.setValue(cur["std_tolerance"] * 100)
         self.tol.setFixedWidth(150)
         b.addWidget(hbox(self.tol, label("%", muted=True), None))
-        b.addWidget(label("An operation counts as finished this far under its standard time.",
+        b.addWidget(label("An operation closed by its X counts as finished only when the hours "
+                          "booked on it reach its standard time, less this margin.",
+                          muted=True, wrap=True))
+        self.use_time = Toggle("Use the entry time (column Z)",
+                               checked=cur.get("use_entry_time", True))
+        b.addWidget(hbox(self.use_time, None))
+        b.addWidget(label("Off: completions are dated by the record date alone.",
                           muted=True, wrap=True))
         b.addWidget(label("Multi-part machines", muted=True))
         self.multi_ed = QLineEdit(cur["multi_part_groups"])
@@ -1252,13 +1278,15 @@ class Page(QWidget):
         self.rules_msg = label("", muted=True)
         sb = button("Save rules", primary=True, slot=self.save_rules)
         b.addWidget(hbox(self.rules_msg, None, sb))
-        self.write_widgets += [sb, self.tol, self.multi_ed]
+        self.write_widgets += [sb, self.tol, self.multi_ed, self.use_time]
 
     def save_rules(self):
         if guard_admin("change the shop rules for"):
             return
         now = save_rules(ctx.db, std_tolerance=self.tol.value() / 100.0,
-                         multi_part_groups=self.multi_ed.text())
+                         multi_part_groups=self.multi_ed.text(),
+                         use_entry_time=self.use_time.isChecked())
+        self.use_time.setChecked(bool(now.get("use_entry_time", True)))
         self.tol.setValue(now["std_tolerance"] * 100)
         self.multi_ed.setText(now["multi_part_groups"])
         self.rules_msg.setText("saved - every page now reads the data this way")

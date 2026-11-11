@@ -148,7 +148,8 @@ class ColumnChart(QWidget):
     def geometry_(self):
         """(plot rect, column pitch, column width, axis top in shown units)."""
         k = 24.0 if self.unit == "days" else 1.0
-        top = max([(it["cut"] + it["queue"]) / k for it in self.items] + [(self.avg or 0) / k])
+        top = max([(it["cut"] + it["queue"] + it.get("rw", 0.0) + it.get("rwq", 0.0)) / k
+                   for it in self.items] + [(self.avg or 0) / k])
         top = self.nice_top(top * 1.05)
         fm = QFontMetrics(self.font_(8))
         left = fm.horizontalAdvance("%.2f" % top) + 12
@@ -267,6 +268,16 @@ class ColumnChart(QWidget):
             p.drawRect(QRectF(x, plot.bottom() - ch, colw, ch))
             p.setBrush(queue_c)
             p.drawRect(QRectF(x, plot.bottom() - ch - qh, colw, qh))
+            # 2.4.0: the rework cycle on top - its waiting, then its hours
+            wh = plot.height() * (it.get("rwq", 0.0) / k) / top
+            rh = plot.height() * (it.get("rw", 0.0) / k) / top
+            if wh > 0:
+                p.setBrush(QColor(RWQ_COLOR))
+                p.drawRect(QRectF(x, plot.bottom() - ch - qh - wh, colw, wh))
+            if rh > 0:
+                p.setBrush(QColor(RW_COLOR))
+                p.drawRect(QRectF(x, plot.bottom() - ch - qh - wh - rh, colw, rh))
+            qh += wh + rh
             p.setOpacity(1.0)
             if lit:
                 p.setBrush(Qt.NoBrush)
@@ -303,15 +314,20 @@ class ColumnChart(QWidget):
         p.end()
 
 
+RW_COLOR, RWQ_COLOR = "#B3261E", "#EF9A9A"        # rework time, rework queue
+
+
 def legend_dots():
     """cutting / queue / average - what the chart colours mean."""
     s_ = soft()
     lb = label("", muted=True)
     lb.setTextFormat(Qt.RichText)
-    lb.setText('<span style="color:%s;">■</span> operation time &nbsp; '
+    lb.setText('<span style="color:%s;">■</span> op. time &nbsp; '
                '<span style="color:%s;">■</span> queue &nbsp; '
-               '<span style="color:%s;">- -</span> average'
-               % (s_["cut"], s_["queue"], s_["lead"]))
+               '<span style="color:%s;">■</span> rw queue &nbsp; '
+               '<span style="color:%s;">■</span> rw time &nbsp; '
+               '<span style="color:%s;">- -</span> avg'
+               % (s_["cut"], s_["queue"], RWQ_COLOR, RW_COLOR, s_["lead"]))
     return lb
 
 
@@ -1083,10 +1099,12 @@ class Page(QWidget):
         self.t_groups = Toggle("Operation groups", checked=True, slot=self.rebuild_panels)
         self.t_prof = Toggle("Route profile", checked=True, slot=self.rebuild_panels)
         self.t_ser = Toggle("Serials", checked=True, slot=self.rebuild_panels)
-        for t in (self.t_steps, self.t_groups, self.t_prof, self.t_ser):
+        self.t_std = Toggle("Actual / standard", checked=False, slot=self.rebuild_panels)
+        for t in (self.t_steps, self.t_groups, self.t_prof, self.t_ser, self.t_std):
             trow.addWidget(t)
         trow.addStretch(1)
-        self.zoom = ZoomControl(lambda: [self.table, self.gtable, self.prof, self.serc])
+        self.zoom = ZoomControl(lambda: [self.table, self.gtable, self.prof, self.serc,
+                                         self.stable])
         trow.addWidget(self.zoom)
         outer.addLayout(trow)
 
@@ -1188,15 +1206,32 @@ class Page(QWidget):
         self.grid2.add(self.pcard, wide=True, weight=3)
         self.grid2.add(self.scard, wide=True, weight=3)
 
+        # ---- 2.4.0: the hours booked on each operation against its standard ----
+        self.grid3 = ModuleGrid()
+        outer.addWidget(self.grid3)
+        self.stdcard = ModuleCard("Actual / standard",
+                                  "average hours booked per operation, over the serials that "
+                                  "finished it, against the traveler's standard time")
+        self.stable = DataTable()
+        self.stable.tiles = True
+        self.stable.fit_width = True
+        self.stable.fit_min = MIN_ROWS
+        self.stable.fit_rows(24)
+        self.stdcard.content_lay.addWidget(self.stable, 1)
+        self.stdcard.setMinimumWidth(420)
+        self.grid3.add(self.stdcard, wide=True, weight=3)
+
         self.flags = ((self.t_steps, self.steps, self.grid), (self.t_groups, self.gcard, self.grid),
-                      (self.t_prof, self.pcard, self.grid2), (self.t_ser, self.scard, self.grid2))
+                      (self.t_prof, self.pcard, self.grid2), (self.t_ser, self.scard, self.grid2),
+                      (self.t_std, self.stdcard, self.grid3))
         self.sel_step = None                 # index into data["steps"], None = whole route
         self.sel_group = None                # (group, sub, part) of the row on the chart
         self.grow_keys = []                  # the groups table, row by row
-        for _t, c, _g in self.flags:
-            c.show()
+        for t_, c, _g in self.flags:
+            c.setVisible(t_.isChecked())
         self.grid.relayout()
         self.grid2.relayout()
+        self.grid3.relayout()
         self.paint_kpis()
 
     # ---------------------------------------------------------------
@@ -1214,6 +1249,7 @@ class Page(QWidget):
             c.setVisible(t.isChecked())
         self.grid.relayout()
         self.grid2.relayout()
+        self.grid3.relayout()
         self.schedule()
 
     # ---- one step picked (a row of STEPS, a column of the profile) ----
@@ -1499,6 +1535,7 @@ class Page(QWidget):
         u = "d" if unit == "days" else "h"
         if not data:
             self.table.clear()
+            self.stable.clear()
             self.note.hide()
             for k in (self.k_lead, self.k_cut, self.k_queue, self.k_eff):
                 k.set("-")
@@ -1509,20 +1546,28 @@ class Page(QWidget):
         s_ = soft()
         cols = [("OP", 70), ("DESCRIPTION", 200), ("LEAD TIME (%s)" % unit, 110),
                 ("OP. TIME (%s)" % unit, 110), ("QUEUE (%s)" % unit, 110),
-                ("FLOW EFFICIENCY", 120), ("SERIALS", 70)]
+                ("FLOW EFFICIENCY", 120), ("SERIALS", 70),
+                ("RW TIME (%s)" % unit, 100), ("RW QUEUE (%s)" % unit, 100)]
         steps = data["steps"]
         avgs = [s["avg_hours"] for s in steps if s["avg_hours"] is not None]
         lo, hi = (min(avgs), max(avgs)) if avgs else (0, 0)
         qs = [s["queue_hours"] for s in steps if s["queue_hours"] is not None]
         qlo, qhi = (min(qs), max(qs)) if qs else (0, 0)
         rows, cbg, cfg, bars = [], {}, {}, {}
+        eps = 0.12 if unit == "days" else 0.005      # shows as 0.00 below this
         for ri, s in enumerate(steps):
             rows.append([str(s["to_op"]), s["to_desc"],
                          format_wf_hours(s["avg_hours"], unit),
                          format_wf_hours(s["cut_hours"], unit),
                          format_wf_hours(s["queue_hours"], unit),
                          eff_text(s["efficiency"], s.get("overlap")),
-                         str(s["n"]) if s["n"] else ""])
+                         str(s["n"]) if s["n"] else "",
+                         format_wf_hours(s.get("rw_hours"), unit) if (s.get("rw_hours") or 0) >= eps else "",
+                         format_wf_hours(s.get("rwq_hours"), unit) if (s.get("rwq_hours") or 0) >= eps else ""])
+            if (s.get("rw_hours") or 0) >= eps:
+                cbg[(ri, 7)], cfg[(ri, 7)] = lt_chip(RW_COLOR, 0.6, night)
+            if (s.get("rwq_hours") or 0) >= eps:
+                cbg[(ri, 8)], cfg[(ri, 8)] = lt_chip(RWQ_COLOR, 0.6, night)
             # the longer the step (or its queue), the stronger the tint
             if s["avg_hours"] is not None:
                 k = 0.5 if hi <= lo else (s["avg_hours"] - lo) / float(hi - lo)
@@ -1537,8 +1582,9 @@ class Page(QWidget):
         self.table.cell_bar = bars
         self.table.set_data(autofit_columns(cols, rows), rows,
                             ["a" if i % 2 == 0 else "b" for i in range(len(rows))],
-                            align=["w", "w"] + ["center"] * 5, cell_bg=cbg, cell_fg=cfg)
+                            align=["w", "w"] + ["center"] * 7, cell_bg=cbg, cell_fg=cfg)
         self.table.cell_tip = {(ri, 1): rows[ri][1] for ri in range(len(rows))}
+        self.show_std(data, unit)
         # THE WHOLE ROUTE, END TO END: the first operation's completion to
         # the last operation's X, over the serials that finished.  Only
         # when none has finished yet: the steps added up.
@@ -1577,15 +1623,46 @@ class Page(QWidget):
                            % data["n_serials"])
 
     # ---- THE CHARTS ----
+    def show_std(self, data, unit):
+        """2.4.0: actual hours against the standard, operation by operation."""
+        rows_ = (data or {}).get("std_rows") or []
+        if not rows_:
+            self.stable.clear()
+            return
+        night = ctx.TH["name"] != "day"
+        s_ = soft()
+        cols = [("OP", 70), ("DESCRIPTION", 220), ("STANDARD (h)", 110), ("ACTUAL AVG (h)", 120),
+                ("ACTUAL / STANDARD", 140), ("SERIALS", 70)]
+        rows, cbg, cfg = [], {}, {}
+        for ri, r in enumerate(rows_):
+            rows.append([str(r["op"]), r["desc"] or "",
+                         ("%.2f" % r["std"]) if r["std"] else "",
+                         ("%.2f" % r["actual"]) if r["actual"] is not None else "",
+                         ("%.0f%%" % (r["ratio"] * 100.0)) if r["ratio"] is not None else "",
+                         str(r["n"]) if r["n"] else ""])
+            if r["ratio"] is not None:
+                off = min(1.0, abs(r["ratio"] - 1.0) / 0.5)      # 50% away = full tint
+                cbg[(ri, 4)], cfg[(ri, 4)] = lt_chip(
+                    s_["queue"] if r["ratio"] > 1.0 else s_["cut"], off, night)
+        self.stable.set_data(autofit_columns(cols, rows), rows,
+                             ["a" if i % 2 == 0 else "b" for i in range(len(rows))],
+                             align=["w", "w"] + ["center"] * 4, cell_bg=cbg, cell_fg=cfg)
+        rs = [r["ratio"] for r in rows_ if r["ratio"] is not None]
+        self.stdcard.set_sub("average hours booked per operation against its standard time"
+                             + ("   ·   mean %.0f%% over %d operation(s)"
+                                % (sum(rs) / len(rs) * 100.0, len(rs)) if rs else ""))
+
     def draw_charts(self):
         data, unit = self.last["data"], self.unit.get()
         u = "d" if unit == "days" else "h"
         for lb in (self.leg1,):
             s_ = soft()
-            lb.setText('<span style="color:%s;">■</span> operation time &nbsp; '
+            lb.setText('<span style="color:%s;">■</span> op. time &nbsp; '
                        '<span style="color:%s;">■</span> queue &nbsp; '
-                       '<span style="color:%s;">- -</span> average'
-                       % (s_["cut"], s_["queue"], s_["lead"]))
+                       '<span style="color:%s;">■</span> rw queue &nbsp; '
+                       '<span style="color:%s;">■</span> rw time &nbsp; '
+                       '<span style="color:%s;">- -</span> avg'
+                       % (s_["cut"], s_["queue"], RWQ_COLOR, RW_COLOR, s_["lead"]))
         f = lambda v: format_wf_hours(v, unit)
         picked = self.group_serials()
         if picked is None:
@@ -1609,12 +1686,15 @@ class Page(QWidget):
         for i, s in enumerate(steps):
             if s["avg_hours"] is None:
                 continue
+            rw_, rwq_ = s.get("rw_hours") or 0.0, s.get("rwq_hours") or 0.0
             items.append({"key": i, "label": s["to_op"], "cut": s["cut_hours"] or 0.0,
-                          "queue": s["queue_hours"] or 0.0,
-                          "tip": "%s  %s\nlead %s %s  =  operation time %s + queue %s\n%d serials"
+                          "queue": s["queue_hours"] or 0.0, "rw": rw_, "rwq": rwq_,
+                          "tip": "%s  %s\nlead %s %s  =  operation time %s + queue %s%s\n%d serials"
                                  "\nclick: this step's serials"
                                  % (s["to_op"], s["to_desc"] or "", f(s["avg_hours"]), u,
-                                    f(s["cut_hours"]), f(s["queue_hours"]), s["n"])})
+                                    f(s["cut_hours"]), f(s["queue_hours"]),
+                                    (" + rework time %s + rework queue %s" % (f(rw_), f(rwq_)))
+                                    if (rw_ or rwq_) else "", s["n"])})
         if by_groups:
             # a column per operation group of the analysis picked on the right
             items = []
@@ -1634,13 +1714,15 @@ class Page(QWidget):
                                "no operation groups - pick or make an analysis (New)")
             self.pcard.set_sub("per operation group · %s" % (self.last["set"] or "no analysis"))
         elif data:
-            avg = (sum(it["cut"] + it["queue"] for it in items) / len(items)) if items else None
+            avg = (sum(it["cut"] + it["queue"] + it.get("rw", 0.0) + it.get("rwq", 0.0)
+                       for it in items) / len(items)) if items else None
             self.prof.picked = self.sel_step
             self.prof.set_data(items, unit, avg, "no closed steps in this selection")
             self.pcard.set_sub("per operation")
 
         # the serials: the whole route, the step picked, or a group's row
         names = data.get("serial_names", {}) if data else {}
+        ser_rw = {}                          # serial key -> (rework time, rework queue)
         if picked is not None:
             title, vals, names = picked
             rows = [(sk, h, c, 1) for sk, h, c in vals]
@@ -1667,6 +1749,7 @@ class Page(QWidget):
             self.b_whole.hide()
         else:
             s = steps[self.sel_step]
+            ser_rw = s.get("serials_rw") or {}
             rows = [(sk, h, c, 1) for sk, h, c in s.get("serials", [])]
             title = "Serials · op %s" % s["to_op"]
             extra = s["to_desc"] or ""
@@ -1695,8 +1778,13 @@ class Page(QWidget):
             rows.sort(key=lambda r: (-r[1], r[0]))
         items, month = [], None
         for r in rows:
-            it = {"key": r[0], "label": names.get(r[0], r[0]), "cut": r[2],
-                  "queue": max(0.0, r[1] - r[2]), "tip": tip(r)}
+            rw_, rwq_ = ser_rw.get(r[0], (0.0, 0.0))
+            cut_ = min(r[2], max(0.0, r[1] - rw_ - rwq_))
+            it = {"key": r[0], "label": names.get(r[0], r[0]), "cut": cut_,
+                  "queue": max(0.0, r[1] - cut_ - rw_ - rwq_), "rw": rw_, "rwq": rwq_,
+                  "tip": tip(r)}
+            if rw_ or rwq_:
+                it["tip"] += "\nof it rework time %s + rework queue %s" % (f(rw_), f(rwq_))
             d = when.get(r[0])
             if d is not None:
                 it["tip"] += "\n%s %s" % ("sold" if by == "sold" else "finished",

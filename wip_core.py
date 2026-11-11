@@ -374,6 +374,9 @@ SAP_COLUMNS = [
    # machine was being set up, the part was not being cut.  A setup row's
    # X does not finish the operation, and its hours are not progress.
    ("unit",           "M",  "Unit",             ["unit", "birim"],                  False),
+   # 2.4.0: the day the booking was TYPED IN (Y).  Only the data check
+   # reads it: a booking entered more than a day after its record date.
+   ("entered",        "Y",  "Entered",          ["entered", "giris tarihi"],        False),
    # Optional: read when present, left empty otherwise.
    ("reject_op_desc", "I",  "Operation",        ["operation", "redlenen"],          False),
    ("wc_desc",        "K",  "Short desc",       ["short desc", "short description"], False),
@@ -1544,13 +1547,13 @@ def sap_read(path, sheet_name=None, header_row=1, day_first=True, log=None,
        return NONE if i is None else i
    (i_mat, i_ser, i_rej, i_rejd, i_cau, i_ccode, i_cdesc, i_wc, i_wcd,
     i_emp, i_empn, i_hour, i_std, i_mach, i_date, i_time, i_seq, i_last,
-    i_unit, i_lab) = (
+    i_unit, i_lab, i_ent) = (
        col("material"), col("serial_no"), col("reject_op"),
        col("reject_op_desc"), col("cause_op"), col("cause_code"),
        col("cause_desc"), col("wc_code"), col("wc_desc"), col("emp_no"),
        col("emp_name"), col("rw_hour"), col("std_hour"), col("machine_hour"),
        col("rw_date"), col("time"), col("seq"), col("last_x"), col("unit"),
-       col("labour_hour"))
+       col("labour_hour"), col("entered"))
    append = out.append
    for n_row, r in enumerate(rows):
        ln = len(r)
@@ -1585,6 +1588,8 @@ def sap_read(path, sheet_name=None, header_row=1, day_first=True, log=None,
            "seq": clean_str(r[i_seq] if 0 <= i_seq < ln else None),
            "last_x": clean_str(r[i_last] if 0 <= i_last < ln else None),
            "unit": clean_str(r[i_unit] if 0 <= i_unit < ln else None),
+           "entered": (parse_date(r[i_ent], day_first=day_first)
+                       if 0 <= i_ent < ln else None),
            "labour_hour": (parse_float(r[i_lab]) if 0 <= i_lab < ln
                            else None),
        })
@@ -1656,7 +1661,7 @@ CREATE TABLE IF NOT EXISTS rw (
    reject_op TEXT, reject_op_desc TEXT, cause_op TEXT, cause_code TEXT,
    cause_desc TEXT, rw_hour REAL, rw_date TEXT, iso_year INTEGER,
    iso_week INTEGER, wc_code TEXT, wc_desc TEXT, emp_no TEXT, emp_name TEXT,
-   entered_by TEXT, imported_at TEXT,
+   entered_by TEXT, imported_at TEXT, ent_date TEXT,
    -- The hours and the full stamp of the booking itself.  The waterfall's
    -- one-row-per-operation table is a sum of these, so keeping them means
    -- it can be rebuilt exactly after any import instead of being patched.
@@ -1679,7 +1684,7 @@ CREATE TABLE IF NOT EXISTS ops (
    seq TEXT DEFAULT '', last_x INTEGER DEFAULT 0,
    -- 1 when the Unit column (M) said "H": a SETUP booking.  Its X does not
    -- close the step and its hours are not progress on the part (v62).
-   setup INTEGER DEFAULT 0,
+   setup INTEGER DEFAULT 0, ent_date TEXT,
    -- The plain labour column (P).  NULL on rows imported before it was
    -- read; progress then falls back to Toplam Is (v62).
    lab_hour REAL);
@@ -1928,7 +1933,7 @@ SESSION_FORGET_SECONDS = 3600
 # Bumped whenever SCHEMA or Database._build_schema() changes, so a database
 # built by an older version gets brought up to date once and every open
 # after that skips the setup entirely.
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 
 # The people who get an account the first time the app opens a database.
 # Roles: admin sees and changes everything; sef / manager / leader / user
@@ -3345,6 +3350,18 @@ class Database:
                "ALTER TABLE ops ADD COLUMN setup INTEGER DEFAULT 0")
        if ops_cols and "lab_hour" not in ops_cols:
            self.conn.execute("ALTER TABLE ops ADD COLUMN lab_hour REAL")
+       # 2.4.0 (schema 28): the day a booking was typed in, and the new
+       # completion rules - the summary table is rebuilt and the margin
+       # starts again at 0 (the standard time is taken as written).
+       rules_240 = False
+       for _t in ("ops", "rw"):
+           _c = {r["name"] for r in self.conn.execute("PRAGMA table_info(%s)" % _t)}
+           if _c and "ent_date" not in _c:
+               self.conn.execute("ALTER TABLE %s ADD COLUMN ent_date TEXT" % _t)
+               rules_240 = True
+       if rules_240:
+           self.conn.execute(
+               "INSERT OR REPLACE INTO meta (key,value) VALUES ('rule_std_tolerance','0.0')")
        for name in ("tot_hour", "mach_hour"):
            if name not in ops_cols:
                self.conn.execute(
@@ -3357,7 +3374,7 @@ class Database:
        if "machine_hour" not in wf_cols:
            self.conn.execute(
                "ALTER TABLE wf_part_data ADD COLUMN machine_hour REAL DEFAULT 0")
-       needs_partdata_rebuild = False
+       needs_partdata_rebuild = bool(rules_240)
        flag_cols = {r["name"] for r in self.conn.execute(
            "PRAGMA table_info(serial_flags)")}
        for name in ("resolved_from", "resolved_at", "resolved_by", "part_no"):
@@ -4304,7 +4321,8 @@ class Database:
                         seq_key(r.get("seq")),
                         1 if is_last_mark(r.get("last_x")) else 0,
                         1 if is_setup_mark(r.get("unit")) else 0,
-                        r.get("labour_hour")))
+                        r.get("labour_hour"),
+                        r["entered"].isoformat() if r.get("entered") else None))
                    ops_loaded += 1
                    continue
 
@@ -4339,7 +4357,8 @@ class Database:
                     float(r.get("machine_hour") or 0.0),
                     r["dt"].isoformat() if r.get("dt") else None,
                     seq_key(r.get("seq")),
-                    1 if is_last_mark(r.get("last_x")) else 0))
+                    1 if is_last_mark(r.get("last_x")) else 0,
+                    r["entered"].isoformat() if r.get("entered") else None))
                loaded += 1
 
            if ops_batch:
@@ -4347,8 +4366,8 @@ class Database:
                    "INSERT INTO ops (row_hash,material,serial_no,serial_key,op_no,"
                    "op_key,op_desc,wc_code,wc_desc,emp_no,emp_name,op_date,"
                    "imported_at,tot_hour,mach_hour,entry_dt,seq,last_x,setup,"
-                   "lab_hour) "
-                   "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", ops_batch)
+                   "lab_hour,ent_date) "
+                   "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", ops_batch)
            if bad_batch:
                self._bulk(
                    "INSERT INTO discarded (material,serial_no,reject_op,cause_op,"
@@ -4359,8 +4378,8 @@ class Database:
                    "INSERT INTO rw (row_hash,material,material_key,order_no,serial_no,"
                    "reject_op,reject_op_desc,cause_op,cause_code,cause_desc,rw_hour,"
                    "rw_date,iso_year,iso_week,wc_code,wc_desc,emp_no,emp_name,"
-                   "entered_by,imported_at,tot_hour,mach_hour,entry_dt,seq,last_x) "
-                   "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   "entered_by,imported_at,tot_hour,mach_hour,entry_dt,seq,last_x,ent_date) "
+                   "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                    rw_batch)
            self.conn.execute(
                "INSERT INTO meta (key,value) VALUES (?,?) "
@@ -4401,8 +4420,10 @@ class Database:
        table and one the size of the rework table.
        """
        idx = {}
-       sql = ("SELECT serial_key, op_key, wc_code, wc_desc, emp_no, emp_name, op_date "
-              "FROM ops WHERE serial_key<>'' AND op_key<>''")
+       sql = ("SELECT serial_key, op_key, wc_code, wc_desc, emp_no, emp_name, "
+              "COALESCE(entry_dt, op_date) AS op_date "
+              "FROM ops WHERE serial_key<>'' AND op_key<>'' "
+              "AND COALESCE(setup,0)=0")
        if serial_keys is None:
            rows = self.conn.execute(sql + " ORDER BY op_date")
            self._fill_cause_index(idx, rows, wanted_pairs)
@@ -5829,14 +5850,21 @@ class Database:
            "       serial_key, opac, seq, MAX(dt), MAX(dt_ops), "
            "       MIN(dt), MIN(dt_ops), "
            "       SUM(rework), SUM(tot), SUM(mach), MAX(kapanis), "
-           "       MAX(CASE WHEN kapanis=1 THEN dt END), SUM(ilerleme), "
+           # 2.4.0 PROGRESS, per operation: its machine time when any was
+           # booked on it, otherwise its labour (P).  Setups and rework
+           # are in neither.
+           "       MAX(CASE WHEN kapanis=1 THEN dt END), "
+           "       CASE WHEN SUM(mach_p)>0 THEN SUM(mach_p) ELSE SUM(tot_p) END, "
            "       SUM(mach_p), SUM(tot_p) "
            "FROM ("
            "  SELECT material, UPPER(REPLACE(material,' ','')) material_key,"
            "         serial_no, serial_key,"
            "         CAST(op_key AS INTEGER) opac, COALESCE(seq,'') seq,"
            "         COALESCE(entry_dt, op_date) dt,"
-           "         COALESCE(entry_dt, op_date) dt_ops,"
+           # 2.4.0: a SETUP booking is not a production entry - it neither
+           # moves the part to this step nor dates it
+           "         CASE WHEN COALESCE(setup,0)<>0 THEN NULL"
+           "              ELSE COALESCE(entry_dt, op_date) END dt_ops,"
            "         0.0 rework, tot_hour tot, mach_hour mach,"
            # THE X THAT CLOSES A STEP: a production booking (this table
            # holds no rework) that is not a setup.  A setup's X means the
@@ -5851,7 +5879,10 @@ class Database:
            "              ELSE COALESCE(lab_hour, tot_hour, 0) END"
            "              ilerleme,"
            # 2.2.0: the same hours once more, PRODUCTION only
-           "         COALESCE(mach_hour,0) mach_p, COALESCE(tot_hour,0) tot_p"
+           "         CASE WHEN COALESCE(setup,0)<>0 THEN 0"
+           "              ELSE COALESCE(mach_hour,0) END mach_p,"
+           "         CASE WHEN COALESCE(setup,0)<>0 THEN 0"
+           "              ELSE COALESCE(lab_hour, tot_hour, 0) END tot_p"
            "  FROM ops WHERE serial_key<>'' AND op_key<>''"
            "  UNION ALL"
            "  SELECT material, UPPER(REPLACE(material,' ','')) material_key,"
@@ -6195,15 +6226,45 @@ class Database:
                keys.add(mk)
        return keys
 
+   def rw_entries_for(self, part_key):
+       """{(serial key, operation number): [(when, rework hours)]} - every
+       rework booking of a part, for the rework share of a lead time
+       (2.4.0).  The operation is the one the rework was booked on (G)."""
+       ck = (self.__dict__.get("cache_id", id(self)), self.data_version(),
+             part_key, "rw", USE_ENTRY_TIME)
+       hit = _PARTDATA_CACHE.get(ck)
+       if hit is not None:
+           return hit
+       out = {}
+       keys = self.wf_resolve_material_keys(part_key)
+       if keys:
+           iso = datetime.datetime.fromisoformat
+           for r in self.rows(
+                   "SELECT UPPER(REPLACE(serial_no,' ','')) AS sk, reject_op, "
+                   "COALESCE(entry_dt, rw_date) AS dt, rw_hour FROM rw "
+                   "WHERE material_key IN (%s)" % ",".join("?" * len(keys)),
+                   tuple(keys)):
+               try:
+                   d = iso(r["dt"])
+               except Exception:
+                   continue
+               if not USE_ENTRY_TIME:
+                   d = datetime.datetime(d.year, d.month, d.day)
+               out.setdefault((r["sk"], _adim_sirasi(op_key(r["reject_op"]), 0)[0]),
+                              []).append((d, r["rw_hour"] or 0.0))
+       _PARTDATA_CACHE[ck] = out
+       return out
+
    def wf_part_data_for(self, part_key):
-       ck = (self.__dict__.get("cache_id", id(self)), self.data_version(), part_key)
+       ck = (self.__dict__.get("cache_id", id(self)), self.data_version(), part_key,
+             USE_ENTRY_TIME, STD_TOLERANCE)
        hit = _PARTDATA_CACHE.get(ck)
        if hit is not None:
            return hit
        out = self._read_part_data(part_key)
        # Two parts on screen at once is the most anybody does; this is a
        # handful of lists, not a leak.
-       if len(_PARTDATA_CACHE) > 4:
+       if len(_PARTDATA_CACHE) > 8:
            _PARTDATA_CACHE.clear()
        _PARTDATA_CACHE[ck] = out
        return out
@@ -6218,6 +6279,12 @@ class Database:
        # this runs over every step record of the part (tens of thousands on
        # a real export) the first time a page asks for it.
        iso = datetime.datetime.fromisoformat
+       if not USE_ENTRY_TIME:
+           # 2.4.0: the record DATE only - the clock time is left out
+           _iso = iso
+           def iso(s):
+               d = _iso(s)
+               return datetime.datetime(d.year, d.month, d.day)
        steps = {}
 
        def when(text, fallback):
@@ -6290,6 +6357,24 @@ class Database:
                        else mach_ops,
                        "labour_ops": (std_hour or 0.0) if lab_ops is None
                        else lab_ops})
+       # THE COMPLETION RULE (2.4.0), written onto every record:
+       #   x_any    a production booking carried the X (as booked)
+       #   done_x   the X AND the hours reach the standard time
+       #   passed   a LATER operation carries a production entry, so
+       #            this one is behind the part - finished, X or not
+       stds = {route_step(c): c.get("std_hour")
+               for c in self.wf_traveler_for(part_key)}
+       ileri = {}
+       for r in out:
+           if r["dt_ops"] is not None:
+               o = _adim_sirasi(r["opac"], 0)[0]
+               if o > ileri.get(r["serial_key"], -1):
+                   ileri[r["serial_key"]] = o
+       for r in out:
+           r["x_any"] = r["done_x"]
+           r["done_x"] = x_closes(r, stds.get(r["step"]))
+           r["passed"] = (r["dt_ops"] is not None and
+                          _adim_sirasi(r["opac"], 0)[0] < ileri.get(r["serial_key"], -1))
        return out
 
    def labour_by_op(self, material_keys, serial_keys=None):
@@ -7142,6 +7227,121 @@ def run_analysis(db, f):
    }
 
 
+def data_accuracy(db, limit=400):
+   """THE BOOKINGS THEMSELVES, CHECKED (2.4.0) - what the completion rule
+   had to work around.  Same shape as data_health(); read over every part
+   with a route, so it is run on request.
+
+       X, HOURS SHORT   a step carrying its X with less than the standard
+                        time on it, and nothing booked further on: read
+                        as still being worked on
+       LATE ENTRIES     a production entry on an operation, dated after
+                        the first entry of a later operation
+       MISSING ENTRIES  a route step with no production entry behind a
+                        part that has moved on: finished, but undated
+       ENTERED LATE     the booking was typed in (Y) more than a day away
+                        from its record date (C)
+   """
+   out = []
+
+   def add(level, title, detail, rows=None):
+       out.append({"level": level, "title": title, "detail": detail,
+                   "rows": rows or []})
+   kisa, gec, eksik = [], [], []
+   n_kisa = n_gec = n_eksik = 0
+   s_kisa, s_gec, s_eksik = set(), set(), set()
+   parts = [r["part_key"] for r in db.rows(
+       "SELECT DISTINCT part_key FROM wf_traveler ORDER BY part_key")]
+   for pk in parts:
+       tick()
+       route = db.wf_traveler_for(pk)
+       if not route:
+           continue
+       steps = [(route_step(c), _adim_sirasi(c["op"], 0)[0],
+                 c.get("label") or c["op"]) for c in route]
+       by = {}
+       for r in db.wf_part_data_for(pk):
+           by.setdefault(r["serial_key"], {})[r["step"]] = r
+       for sk, recs in by.items():
+           name = next(iter(recs.values())).get("serial") or sk
+           ops = [(_adim_sirasi(r["opac"], 0)[0], r) for r in recs.values()
+                  if r.get("dt_ops") is not None]
+           if not ops:
+               continue
+           ileri = max(o for o, _r in ops)
+           for o, r in ops:
+               if r.get("x_any") and not r.get("done_x") and not r.get("passed"):
+                   n_kisa += 1
+                   s_kisa.add((pk, sk))
+                   if len(kisa) < limit:
+                       kisa.append([pk, name, "op %s" % r["step"],
+                                    "%.2f h booked" % (r.get("labour") or 0.0)])
+               # the earliest first entry among the operations after it
+               sonra = [(q.get("dt_ops_first") or q["dt_ops"]) for o2, q in ops if o2 > o]
+               if sonra and r["dt_ops"].date() > min(sonra).date():
+                   n_gec += 1
+                   s_gec.add((pk, sk))
+                   if len(gec) < limit:
+                       gec.append([pk, name, "op %s" % r["step"],
+                                   "last entry %s" % r["dt_ops"].strftime("%d.%m.%Y"),
+                                   "a later op began %s" % min(sonra).strftime("%d.%m.%Y")])
+           for st, o, lbl in steps:
+               r = recs.get(st)
+               if o < ileri and (r is None or r.get("dt_ops") is None):
+                   n_eksik += 1
+                   s_eksik.add((pk, sk))
+                   if len(eksik) < limit:
+                       eksik.append([pk, name, "op %s" % lbl])
+
+   def say(n, s, rows, title, good, bad):
+       if not n:
+           add("ok", title, good)
+       else:
+           add("warn", title, bad % (n, len(s)) +
+               ("  (first %d listed)" % len(rows) if n > len(rows) else ""), rows)
+   say(n_kisa, s_kisa, kisa, "X, HOURS SHORT",
+       "No step carries its X with less than its standard time on it.",
+       "%d step(s) on %d serial(s) carry the X with less than the standard time "
+       "booked and nothing further on: they read as still being worked on.")
+   say(n_gec, s_gec, gec, "LATE ENTRIES",
+       "No operation was booked after a later one had begun.",
+       "%d operation(s) on %d serial(s) carry a production entry dated after "
+       "a later operation had already begun.")
+   say(n_eksik, s_eksik, eksik, "MISSING ENTRIES",
+       "Every step behind every part carries a production entry.",
+       "%d route step(s) on %d serial(s) were passed with no production entry: "
+       "finished, but with no date - lead times skip them.")
+   # typed in more than a day away from the record date
+   rows, n, dolu = [], 0, 0
+   for tbl, dcol, opcol in (("ops", "op_date", "op_no"), ("rw", "rw_date", "reject_op")):
+       try:
+           dolu += db.rows("SELECT COUNT(*) n FROM %s WHERE ent_date IS NOT NULL" % tbl)[0]["n"]
+           q = ("FROM %s WHERE ent_date IS NOT NULL AND %s IS NOT NULL AND "
+                "ABS(julianday(ent_date) - julianday(%s)) > 1" % (tbl, dcol, dcol))
+           n += db.rows("SELECT COUNT(*) n " + q)[0]["n"]
+           if len(rows) < limit:
+               for r in db.rows("SELECT material, serial_no, %s AS op, %s AS d, ent_date, "
+                                "emp_name %s ORDER BY ABS(julianday(ent_date) - "
+                                "julianday(%s)) DESC LIMIT %d"
+                                % (opcol, dcol, q, dcol, limit - len(rows))):
+                   rows.append([r["material"], r["serial_no"], "op %s" % r["op"],
+                                "record %s" % r["d"], "entered %s" % r["ent_date"],
+                                r["emp_name"] or ""])
+       except sqlite3.Error:
+           pass
+   if not dolu:
+       add("warn", "ENTERED LATE",
+           "The Entered date (column Y) has not been read yet - upload the SAP "
+           "data again to have this checked.")
+   elif not n:
+       add("ok", "ENTERED LATE", "Every booking was typed in within a day of its record date.")
+   else:
+       add("warn", "ENTERED LATE",
+           "%d booking(s) were typed in more than a day away from their record date." % n,
+           rows)
+   return out
+
+
 def data_health(db):
    """What the answers are standing on, and where it is thin.
 
@@ -7403,6 +7603,17 @@ def live_positions(db, part_keys=None, d1=None, d2=None, exclude_sold=True):
                    "SELECT material, op_no, COALESCE(seq,'') AS seq, wc_code, "
                    "COUNT(*) n FROM ops WHERE wc_code<>'' "
                    "GROUP BY material, op_no, seq, wc_code ORDER BY n DESC")]
+   son_wc = {}
+   _mats = sorted({r["material"] for r in rows if r["material"]})
+   for _i in range(0, len(_mats), 400):
+       _ch = _mats[_i:_i + 400]
+       for q in db.rows(
+               "SELECT serial_key, op_no, COALESCE(seq,'') AS seq, wc_code, "
+               "MAX(COALESCE(entry_dt, op_date)) AS son FROM ops "
+               "WHERE wc_code<>'' AND COALESCE(setup,0)=0 AND material IN (%s) "
+               "GROUP BY serial_key, op_no, seq" % ",".join("?" * len(_ch)),
+               tuple(_ch)):
+           son_wc[(q["serial_key"], step_key(q["op_no"], q["seq"]))] = q["wc_code"]
    wc_of_op = {}
    for mat, op_no, seq, wc in db._agg("wc_of_op", _wc_rows):
        wc_of_op.setdefault((norm_text(mat), step_key(op_no, seq)), wc)
@@ -7454,6 +7665,23 @@ def live_positions(db, part_keys=None, d1=None, d2=None, exclude_sold=True):
            for pos, k in enumerate(keys):
                if kayit(k):
                    ileri = pos
+       if ileri >= 0:
+           # 2.4.0: the SEQUENCES of the furthest operation are judged one
+           # by one, as on the waterfall - the part is at the open one
+           # being worked on, else at the first one still open
+           _ops = step_ops[mk]
+           _g = [i for i, o in enumerate(_ops) if o == _ops[ileri]]
+           if len(_g) > 1:
+               def _kap(i):
+                   v = kayit(keys[i])
+                   if not (v and len(v) > 3 and v[3]):
+                       return False
+                   s_ = float(stds.get(mk, {}).get(keys[i]) or 0.0)
+                   return s_ <= 0 or (v[0] or 0.0) >= s_ * (1.0 - STD_TOLERANCE) - 1e-9
+               _ac = [i for i in _g if not _kap(i)]
+               _ba = [i for i in _ac
+                      if (kayit(keys[i]) or (0, None, None))[2] is not None]
+               ileri = max(_ba) if _ba else (min(_ac) if _ac else _g[-1])
        # A booking's own step: its operation plus the sequence it names.
        ok = step_key(r["op_no"], row_get(r, "seq"))
        nxt = nxt_key = ""
@@ -7475,12 +7703,18 @@ def live_positions(db, part_keys=None, d1=None, d2=None, exclude_sold=True):
        wc_here = ((r["wc_code"] or "")
                   if step_key(r["op_no"], row_get(r, "seq")) == ok else "")
        if not wc_here:
+           # 2.4.0: the machine of the serial's own LAST entry on the step
+           wc_here = son_wc.get((sk, ok), "")
+       if not wc_here:
            wc_here = wc_of_op.get((mk, ok), "") or (r["wc_code"] or "")
        p = op_progress(booked, stds.get(mk, {}).get(ok), last_dt, now)
        # THE X DECIDES (v62), exactly as on the waterfall: closed by a
        # non-setup X -> off this step, waiting for the next; otherwise it
        # is being worked here - however many hours are on it.
        uretimde = bool(vals and len(vals) > 2 and vals[2] is not None)
+       # 2.4.0: the X stands only when the hours reach the standard time
+       if bitti_x and p is not None and not p["complete"]:
+           bitti_x = False
        if p is not None:
            if bitti_x:
                p = dict(p, running=False, idle=False, remaining=0.0,
@@ -8219,6 +8453,10 @@ def bottleneck_flow(db, part_key, d1, d2, serial_keys=None,
    # (first day, position) arrivals: it moves the part, it closes nothing.
    rota_disi = {}
    sira_keys, sira_best = _rota_bilgisi(route)[1]
+   op_of = [_adim_sirasi(c["op"], 0)[0] for c in route]
+   op_grup = {}
+   for i_, o_ in enumerate(op_of):
+       op_grup.setdefault(o_, []).append(i_)
    for r in db.wf_part_data_for(part_key):
        pos = pos_of.get(r.get("step") or step_key(r["opac"], r.get("seq")))
        if serial_keys and r["serial_key"] not in serial_keys:
@@ -8234,10 +8472,11 @@ def bottleneck_flow(db, part_key, d1, d2, serial_keys=None,
            if j:
                ilk = (r.get("dt_ops_first") or r["dt_ops"]).date()
                rota_disi.setdefault(r["serial_key"], []).append(
-                   (ilk, sira_best[j - 1]))
+                   (ilk, sira_best[j - 1], hedef[0]))
            continue
        ilk = r.get("dt_ops_first") or r["dt_ops"]
-       x_gun = r["x_dt"].date() if (r.get("done_x") and r.get("x_dt")) \
+       x_gun = r["x_dt"].date() if ((r.get("done_x") or (r.get("x_any") and r.get("passed")))
+                                    and r.get("x_dt")) \
            else None
        onceki = by_serial.setdefault(r["serial_key"], {}).get(pos)
        kayit = (ilk.date(), x_gun, r["dt_ops"].date())
@@ -8252,7 +8491,7 @@ def bottleneck_flow(db, part_key, d1, d2, serial_keys=None,
        for ilk, x_gun, son_g in adimlar.values():
            all_days.update(g for g in (ilk, x_gun, son_g) if g)
    for olaylar in rota_disi.values():
-       all_days.update(g for g, _p in olaylar)
+       all_days.update(g for g, _p, _o in olaylar)
    bos = {"route": route, "days": [], "completed": {}, "completed_x": {},
           "completed_no_x": {}, "queue": {}, "arrived": {}, "left": {},
           "skipped": {}, "passed": {}, "waiting_end": {}}
@@ -8286,14 +8525,18 @@ def bottleneck_flow(db, part_key, d1, d2, serial_keys=None,
        disi = rota_disi.get(sk, [])
        # FINISHED: every step behind the furthest one reached, and that one
        # too when its X is in.
-       en_ileri = max(list(adimlar) + [p for _g, p in disi])
+       # 2.4.0: "behind" is by OPERATION - the sequences of the furthest
+       # operation are not behind one another, and an entry on an
+       # operation the route does not list still puts the ones before it
+       # behind the part.
+       ileri_op = max([op_of[p_] for p_ in adimlar] + [o for _g, _p, o in disi])
        for pos, (ilk, x_gun, son_g) in adimlar.items():
            if x_gun is not None:
                if x_gun in gun_kumesi:
                    say(completed_x, pos, x_gun)
                    say(completed, pos, x_gun)
                    kim(completed_who, pos, x_gun, sk)
-           elif pos < en_ileri:
+           elif op_of[pos] < ileri_op:
                if son_g in gun_kumesi:
                    say(completed_no_x, pos, son_g)
                    if count_without_x:
@@ -8302,23 +8545,42 @@ def bottleneck_flow(db, part_key, d1, d2, serial_keys=None,
 
        # WAITING: walk the calendar.  Steps in the order they were first
        # reached, so each day only has to move an index forward.
-       ulasma = sorted([(ilk, pos) for pos, (ilk, _x, _s) in adimlar.items()]
+       ulasma = sorted([(ilk, pos, op_of[pos]) for pos, (ilk, _x, _s) in adimlar.items()]
                        + disi)
-       idx, reached = 0, -1
+       idx, reached, gorulen_op = 0, -1, -1
        onceki = None
        for day in days:
            while idx < len(ulasma) and ulasma[idx][0] <= day:
                if ulasma[idx][1] > reached:
                    reached = ulasma[idx][1]
+               if ulasma[idx][2] > gorulen_op:
+                   gorulen_op = ulasma[idx][2]
                idx += 1
            simdi = None
            if reached >= 0:
-               x_gun = (adimlar.get(reached) or (None, None, None))[1]
-               if x_gun is not None and x_gun <= day:
-                   if reached + 1 < n_pos:
-                       simdi = reached + 1
+               def kapali(p_):
+                   x_ = (adimlar.get(p_) or (None, None, None))[1]
+                   return x_ is not None and x_ <= day
+               grup = op_grup[op_of[reached]]
+               if gorulen_op > op_of[reached]:
+                   # an entry further on (off the route): passed - as
+                   # op_progress_for_route reads it
+                   simdi = (reached + 1 if (reached in adimlar and adimlar[reached][0] <= day)
+                            else reached)
+               elif len(grup) > 1:
+                   # SEQUENCES: at the open one being worked on, else at
+                   # the first one still open, else past the operation
+                   acik = [p_ for p_ in grup if not kapali(p_)]
+                   basli = [p_ for p_ in acik
+                            if p_ in adimlar and adimlar[p_][0] <= day]
+                   simdi = (max(basli) if basli else
+                            (min(acik) if acik else grup[-1] + 1))
+               elif kapali(reached):
+                   simdi = reached + 1
                else:
                    simdi = reached
+               if simdi is not None and simdi >= n_pos:
+                   simdi = None
            if simdi is not None:
                say(queue, simdi, day)
                kim(queue_who, simdi, day, sk)
@@ -8662,16 +8924,22 @@ def lead_op_record(entries, steps):
    """(record, operation time) of one operation for one serial: the
    record of the sequence with the LAST time entry, and the operation
    time of all its sequences.  (None, 0.0) when nothing was booked."""
-   best, cut = None, 0.0
+   best, cut, acik = None, 0.0, False
    for st in steps:
       r = entries.get(st)
       if r is None:
          continue
       cut += lead_cut_hours(r)
-      if best is None or r["dt"] > best["dt"]:
+      if lead_x_dt(r) is None:
+         acik = True
+      if best is None or ((lead_done_dt(r) or r["dt"])
+                          > (lead_done_dt(best) or best["dt"])):
          best = r
+   # 2.4.0: an operation is finished when ALL its booked sequences are,
+   # on the latest of their completions
+   if best is not None and acik and lead_x_dt(best) is not None:
+      best = dict(best, done_x=False, passed=False)
    return best, cut
-
 
 def lead_group_values(route_ops, entries_by_serial, chosen):
    """([(serial key, lead hours, operation hours)], problem text) for one
@@ -8910,6 +9178,16 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
    adaylar = {}                      # i -> [(hours, cut hours)]
    rsteps = [route_step(c) for c in route]      # 2.2.0: once, not per serial
    finished, names = set(), {}
+   opno_of = [_adim_sirasi(c["op"], 0)[0] for c in route]
+   gruplar = []
+   for i_, o_ in enumerate(opno_of):
+       if gruplar and opno_of[gruplar[-1][-1]] == o_:
+           gruplar[-1].append(i_)
+       else:
+           gruplar.append([i_])
+   rw_by = db.rw_entries_for(part_key)
+   rw_sum, rwq_sum, step_rw = {}, {}, {}
+   act_sum, act_n = {}, {}
    # THE WHOLE ROUTE, END TO END (2.3.0), per serial - the same rule as
    # the waterfall's AVG LEAD (WFAnalyzer.whole_route_lead):
    #     X of the LAST operation  minus  the START (lead_route_start: the
@@ -8942,29 +9220,62 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
        for r in entries.values():
            names[sk] = r.get("serial") or sk
            break
-       for i in range(len(route) - 1):
-           r2 = entries.get(rsteps[i + 1])
-           if r2 is None or lead_x_dt(r2) is None:
-               continue
-           r1 = None
-           for j in range(i, -1, -1):
-               r1 = entries.get(rsteps[j])
-               if r1:
-                   break
-           hrs = lead_gap_hours(r1, r2)
-           if hrs is None:
-               continue
-           # The work content of the operation the part is arriving at:
-           # machine time, or labour where the operation has no machine.
-           # Everything else in the step was queue.
-           adaylar.setdefault(i, []).append((hrs, lead_cut_hours(r2), sk))
+       # 2.4.0  STEP BY STEP, FROM COMPLETION TO COMPLETION.  Operations
+       # follow the traveler; the SEQUENCES of one operation follow the
+       # order they were actually finished in.  Each finished step is
+       # measured from the one finished before it; the first of an
+       # operation from the latest completion of the operation before.
+       # An operation nobody booked has no date: the step after it is not
+       # measured.
+       t_once, p_once = None, None
+       for g in gruplar:
+           bitenler = []
+           for p_ in g:
+               r_ = entries.get(rsteps[p_])
+               t_ = lead_x_dt(r_)
+               if t_ is not None:
+                   bitenler.append((t_, p_, r_))
+           bitenler.sort(key=lambda v: (v[0], v[1]))
+           for t_, p_, r_ in bitenler:
+               h_ = lead_cut_hours(r_)
+               if h_ > 0:
+                   act_sum[p_] = act_sum.get(p_, 0.0) + h_
+                   act_n[p_] = act_n.get(p_, 0) + 1
+               if t_once is not None and p_ > 0:
+                   hrs = (t_ - t_once).total_seconds() / 3600.0
+                   # THE REWORK IN IT: bookings of rework against the step
+                   # behind, made after it was finished and before this one
+                   # was.  From that completion to the last of them is the
+                   # reject / disposition / rework cycle: the hours booked
+                   # (rework time) and the rest of it (rework queue).
+                   rw_t = rw_q = 0.0
+                   son, saat = None, 0.0
+                   for d_, h_ in rw_by.get((sk, opno_of[p_once]), ()):
+                       if t_once < d_ <= t_:
+                           saat += h_
+                           if son is None or d_ > son:
+                               son = d_
+                   if son is not None and hrs > 0:
+                       kirmizi = min(hrs, (son - t_once).total_seconds() / 3600.0)
+                       rw_t = min(saat, kirmizi)
+                       rw_q = kirmizi - rw_t
+                   adaylar.setdefault(p_ - 1, []).append(
+                       (hrs, lead_cut_hours(r_), sk, rw_t, rw_q))
+               t_once, p_once = t_, p_
+           if not bitenler:
+               t_once, p_once = None, None
    # 2.2.0: the kept figures per serial too - the page charts them.
    # {step index: [(serial key, lead, cut)]}, {serial key: [lead, cut, steps]}
    step_serials, per_serial = {}, {}
    for i, vals in adaylar.items():
        kept = step_serials[i] = []
-       for (hrs, cut, sk), keep in zip(vals, lead_keep_mask([v[0] for v in vals])):
+       rws = step_rw[i] = {}
+       for (hrs, cut, sk, rw_t, rw_q), keep in zip(vals, lead_keep_mask([v[0] for v in vals])):
            if keep:
+               rw_sum[i] = rw_sum.get(i, 0.0) + rw_t
+               rwq_sum[i] = rwq_sum.get(i, 0.0) + rw_q
+               if rw_t or rw_q:
+                   rws[sk] = (rw_t, rw_q)
                step_sum[i] = step_sum.get(i, 0.0) + hrs
                step_n[i] = step_n.get(i, 0) + 1
                cut_sum[i] = cut_sum.get(i, 0.0) + cut
@@ -8979,7 +9290,7 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
                    t[2] += 1
 
    steps = []
-   tot_lead = tot_cut = 0.0
+   tot_lead = tot_cut = tot_rw = tot_rwq = 0.0
    n_overlap = 0
    for i in range(len(route) - 1):
        if i in atla:
@@ -8996,8 +9307,16 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
        # steps is reported so the reading is not taken as cleaner than it is.
        overlap = bool(lead is not None and booked is not None and booked > lead)
        cut = min(booked, lead) if overlap else booked
-       queue = max(0.0, lead - cut) if (lead is not None and cut is not None) else None
+       rw_h = (rw_sum.get(i, 0.0) / n) if n else None
+       rwq_h = (rwq_sum.get(i, 0.0) / n) if n else None
+       if lead is not None and cut is not None:
+           # the rework cycle is taken out of the step first
+           cut = min(cut, max(0.0, lead - rw_h - rwq_h))
+       queue = (max(0.0, lead - cut - rw_h - rwq_h)
+                if (lead is not None and cut is not None) else None)
        if lead is not None:
+           tot_rw += rw_h
+           tot_rwq += rwq_h
            tot_lead += lead
            tot_cut += cut or 0.0
            n_overlap += overlap
@@ -9009,6 +9328,10 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
            "avg_hours": lead, "n": n,
            "cut_hours": cut, "cut_booked": booked, "overlap": overlap,
            "queue_hours": queue,
+           # 2.4.0: the rework cycle inside the step - hours booked, and
+           # the waiting around them; {serial key: (time, queue)}
+           "rw_hours": rw_h, "rwq_hours": rwq_h,
+           "serials_rw": step_rw.get(i, {}),
            # What share of the step was cutting.  Low is not automatically
            # bad - an inspection step has little machine time by nature -
            # but a long step with almost no machine time in it is queue,
@@ -9024,7 +9347,19 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
    kept = [v for v in route_serial.values() if v[2]]
    route_lead = (sum(v[0] for v in kept) / len(kept)) if kept else None
    route_cut = (sum(v[1] for v in kept) / len(kept)) if kept else None
+   # 2.4.0  ACTUAL AGAINST STANDARD: per operation, the average hours
+   # booked on it by the serials that finished it (machine time, else
+   # labour - no setup, no rework) next to its standard time.
+   std_rows = []
+   for i_, c_ in enumerate(route):
+       n_ = act_n.get(i_, 0)
+       a_ = (act_sum[i_] / n_) if n_ else None
+       s_ = float(c_.get("std_hour") or 0.0)
+       std_rows.append({"op": c_.get("label") or c_["op"], "desc": c_["desc"],
+                        "std": s_ or None, "actual": a_, "n": n_,
+                        "ratio": (a_ / s_) if (a_ is not None and s_ > 0) else None})
    return {"route": route, "steps": steps, "date_mode": date_mode,
+           "std_rows": std_rows,
            "per_serial": per_serial, "serial_names": names,
            "finished": finished,
            # end to end: first operation's completion -> last operation's X
@@ -9034,7 +9369,8 @@ def _lead_time_analysis(db, part_key, d1, d2, serial_keys=None,
            "route_last": (route[-1].get("label") or route[-1]["op"]),
            "n_serials": len(by_serial), "n_completed_pairs": sum(step_n.values()),
            "total_lead": tot_lead, "total_cut": tot_cut,
-           "total_queue": max(0.0, tot_lead - tot_cut),
+           "total_queue": max(0.0, tot_lead - tot_cut - tot_rw - tot_rwq),
+           "total_rw": tot_rw, "total_rwq": tot_rwq,
            "n_overlap": n_overlap,
            "flow_efficiency": (tot_cut / tot_lead) if tot_lead else None}
 
@@ -9465,6 +9801,7 @@ def acc_board(db, definition, now=None, exclude_serial_keys=None,
             continue
          m = dict(old if old["dt"] >= r["dt"] else r)
          m["done_x"] = bool(old.get("done_x") or r.get("done_x"))
+         m["x_any"] = bool(old.get("x_any") or r.get("x_any"))
          xs = [x for x in (old.get("x_dt"), r.get("x_dt")) if x]
          m["x_dt"] = max(xs) if xs else None
          ops_ = [x for x in (old.get("dt_ops"), r.get("dt_ops")) if x]
@@ -9481,7 +9818,8 @@ def acc_board(db, definition, now=None, exclude_serial_keys=None,
             if (not rec.get("done_x") and rec.get("dt_ops")
                   and full_pos[k] < en_ileri):
                rec["done_x"] = True
-               rec["x_dt"] = rec["dt_ops"]
+               if not (rec.get("x_any") and rec.get("x_dt")):
+                  rec["x_dt"] = rec["dt_ops"]
          rec_last = opmap.get(last_key)
          if sk not in bad_fin and rec_last and rec_last.get("done_x"):
             day = (rec_last.get("x_dt") or rec_last["dt"]).date()
@@ -10406,6 +10744,9 @@ IDLE_MINUTES = 0.0
 # labour reaches it.  Raising this to 0.10 allows the 10% margin instead;
 # it is the only number that needs changing.
 STD_TOLERANCE = 0.0
+# 2.4.0: completion times carry the clock time of the booking (column Z)
+# on top of its record date.  Switched off, only the date counts.
+USE_ENTRY_TIME = True
 
 
 # ---------------------------------------------------------------------------
@@ -10420,7 +10761,7 @@ STD_TOLERANCE = 0.0
 # They are copied into module globals rather than read per row: op_progress
 # runs once per operation per serial, and a database lookup in that loop
 # would be felt.
-RULE_DEFAULTS = {"std_tolerance": 0.0, "shift_hours": 8.0,
+RULE_DEFAULTS = {"use_entry_time": True, "std_tolerance": 0.0, "shift_hours": 8.0,
                  "shifts_per_day": 3.0, "work_days": 7,
                  # Minutes of nobody touching the keyboard or mouse before
                  # this copy closes itself.  0 turns it off.  A copy left
@@ -10435,7 +10776,9 @@ def apply_rules(db):
    """Loads the shop rules out of the database into the module."""
    global STD_TOLERANCE, SHIFT_HOURS, MULTI_PART_GROUPS
    global SHIFTS_PER_DAY, WORK_DAYS, IDLE_MINUTES, WORK_WEEKDAYS
+   global USE_ENTRY_TIME
    try:
+       USE_ENTRY_TIME = bool(db.get_meta("rule_use_entry_time", True))
        tol = float(db.get_meta("rule_std_tolerance",
                                RULE_DEFAULTS["std_tolerance"]))
        shift = float(db.get_meta("rule_shift_hours",
@@ -10572,7 +10915,8 @@ def save_shift_schedule(db, schedule):
 
 def read_rules():
    """The rules as they stand, for showing and for saving back."""
-   return {"std_tolerance": STD_TOLERANCE, "shift_hours": SHIFT_HOURS,
+   return {"std_tolerance": STD_TOLERANCE, "use_entry_time": USE_ENTRY_TIME,
+           "shift_hours": SHIFT_HOURS,
            "shifts_per_day": SHIFTS_PER_DAY, "work_days": WORK_DAYS,
            "work_weekdays": WORK_WEEKDAYS,
            "idle_minutes": IDLE_MINUTES,
@@ -10582,7 +10926,7 @@ def read_rules():
 
 def save_rules(db, std_tolerance=None, shift_hours=None,
                multi_part_groups=None, shifts_per_day=None, work_days=None,
-               idle_minutes=None, work_weekdays=None):
+               idle_minutes=None, work_weekdays=None, use_entry_time=None):
    """Writes the rules back and puts them straight into effect.
 
    Only a rule that really changed and that the figures depend on says
@@ -10590,6 +10934,8 @@ def save_rules(db, std_tolerance=None, shift_hours=None,
    caches, and on the shared file the recount took a minute or two - for
    the idle close time, which no figure reads, that was pure waste."""
    before = read_rules()
+   if use_entry_time is not None:
+       db.set_meta("rule_use_entry_time", bool(use_entry_time))
    if std_tolerance is not None:
        db.set_meta("rule_std_tolerance", float(std_tolerance))
    if shift_hours is not None:
@@ -10897,11 +11243,28 @@ PREDICT_MAX_DAYS = 20.0
 # on the hours would contradict the position it starts from.  The one
 # prediction left is by lead time - see wf_predicted_view.
 
+def x_closes(rec, std):
+   """THE X PLUS THE HOURS (2.4.0).  An X on a production booking closes
+   a step only when the hours booked on it reach the traveler's standard
+   time (less the margin, STD_TOLERANCE - 0 as it stands).  A step with no
+   standard time is closed by its X alone: those are closed with an empty
+   booking."""
+   if not rec or not rec.get("done_x"):
+      return False
+   try:
+      std = float(std or 0.0)
+   except (TypeError, ValueError):
+      std = 0.0
+   if std <= 0:
+      return True
+   return float(rec.get("labour") or 0.0) >= std * (1.0 - STD_TOLERANCE) - 1e-9
+
+
 def step_is_done(rec):
-   """Is this step closed?  Only the X decides (v62) - a production
-   booking that is not a setup carrying it.  The hours never finish a
-   step."""
-   return bool(rec and rec.get("done_x"))
+   """Is this step finished?  (2.4.0)  A later operation carries a
+   production entry (`passed`), or its X stands and the hours reach the
+   standard time (`done_x`, see x_closes)."""
+   return bool(rec and (rec.get("done_x") or rec.get("passed")))
 
 def row_get(row, name, default=None):
    """`row[name]` for a dict OR an sqlite3.Row.
@@ -10974,19 +11337,26 @@ LEAD_OUTLIER_X = 3.0
 
 
 def lead_done_dt(rec):
-   """When an operation was completed: its X, else its last production
-   entry, else its last entry.  None when there is no record."""
+   """When an operation was completed: its latest X, else its last
+   production entry, else its last entry.  None when there is no record."""
    if not rec:
       return None
-   if rec.get("done_x") and rec.get("x_dt"):
+   if rec.get("x_dt") and (rec.get("done_x") or rec.get("x_any")):
       return rec["x_dt"]
    return _uretim_dt(rec) or rec.get("dt")
 
 
 def lead_x_dt(rec):
-   """The X date of an operation closed by one, else None."""
-   if rec and rec.get("done_x") and rec.get("x_dt"):
+   """The completion time of a FINISHED operation, else None (2.4.0):
+   closed by its X and its hours, or passed - a later operation carries
+   a production entry - and then its latest X, else its last production
+   entry."""
+   if not rec:
+      return None
+   if rec.get("done_x") and rec.get("x_dt"):
       return rec["x_dt"]
+   if rec.get("passed"):
+      return (rec.get("x_dt") if rec.get("x_any") else None) or _uretim_dt(rec)
    return None
 
 
@@ -11168,13 +11538,37 @@ def op_progress_for_route(route, opmap, now=None):
    if here is None:
        return set(), None, {}, None
 
-   rec_here = opmap.get(route_step(route[here]))
-   kapali = bool(rec_here and rec_here.get("done_x"))
+   # 2.4.0  THE FURTHEST OPERATION carrying a production entry (on the
+   # route or off it): every operation before it is finished.  Its own
+   # steps - an operation written as several SEQUENCES is worked in any
+   # order - are each finished by their own X and hours.
+   def opno(i):
+       return _adim_sirasi(route[i]["op"], 0)[0]
 
-   done = {i for i in booked if i < here}
-   if kapali:
-       done.add(here)
-   running = (here if (rec_here is not None and not kapali
+   def kayit(i):
+       return opmap.get(route_step(route[i]))
+   ileri_op = -1
+   for k, rec in opmap.items():
+       if _uretim_dt(rec):
+           ileri_op = max(ileri_op, _adim_sirasi(split_step(k)[0], 0)[0])
+
+   def bitti(i):
+       rec = kayit(i)
+       if rec is None:
+           return False
+       if _uretim_dt(rec) and opno(i) < ileri_op:
+           return True
+       return x_closes(rec, route[i].get("std_hour"))
+   done = {i for i in booked if (i < here and opno(i) < opno(here)) or bitti(i)}
+   grup = [i for i in range(len(route)) if opno(i) == opno(here)]
+   if len(grup) > 1 and opno(here) >= ileri_op:
+       acik = [i for i in grup if i not in done and _uretim_dt(kayit(i))]
+       bos = [i for i in grup if i not in done]
+       # being worked on -> that sequence; all booked ones closed -> waiting
+       # at the first one still open; none open -> the operation is done
+       here = max(acik) if acik else (min(bos) if bos else max(grup))
+   rec_here = kayit(here)
+   running = (here if (rec_here is not None and here not in done
                        and _uretim_dt(rec_here)) else None)
 
    progress = {}
@@ -11233,7 +11627,7 @@ def step_completion_dates(route, opmap, done):
        rec = opmap.get(route_step(route[i]))
        if not rec:
            continue
-       if rec.get("done_x") and rec.get("x_dt"):
+       if rec.get("x_dt") and (rec.get("done_x") or rec.get("x_any")):
            out[i] = (rec["x_dt"], True)
        elif _uretim_dt(rec):
            out[i] = (_uretim_dt(rec), False)

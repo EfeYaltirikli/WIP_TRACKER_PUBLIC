@@ -1,7 +1,7 @@
 ================================================================================
 WIP TRACKER  -  ANALIZ SAYFALARI: NE, NASIL HESAPLANIYOR
 ================================================================================
-Surum v62
+Surum 2.4.0
 Bu belge, programdaki her analizin HANGI VERIYI okudugunu, HANGI KURALI
 uyguladigini ve NEYI HESABA KATIP NEYI KATMADIGINI anlatir.  Amaci
 kontrol edilebilmesi: bir sayi beklediginizden farkli ciktiginda hangi
@@ -25,6 +25,71 @@ ilgilendiginiz sayfa.
 ================================================================================
 BOLUM 0   HERKESIN KULLANDIGI TEMEL KURALLAR
 ================================================================================
+
+0.0  2.4.0 KURALLARI  (11.11.2026 - ASAGIDAKI ESKI KURALLARIN YERINE GECER)
+--------------------------------------------------------------------------------
+Bu bolum 0.2, 0.2b ("SEKANSLAR SIRALIDIR"), 0.3, 0.4 ve 3.5'te bununla
+celisen her seyin YERINE GECER.  Sunum: WIP_TRACKER_Hesaplama_Mantigi.pptx
+
+GIRIS TURLERI
+    NORMAL   setup ya da rework olmayan giris - her seye sayilir
+    SETUP    M (Unit) = "H" - sureye, tamamlanmaya, konuma SAYILMAZ
+    REWORK   Q > 0 - sureye, tamamlanmaya, konuma SAYILMAZ; yalniz rework
+             analizinde ve lead time'in kirmizi kisminda kullanilir
+
+OPERASYON NE ZAMAN BITER
+    1  SONRAKI operasyonlardan birine (daha buyuk operasyon numarasi;
+       rotada olsun olmasin) normal giris varsa -> BITTI.
+    2  Yoksa: normal bir giriste X (AH) VAR  VE  girilen sure >= standart
+       sure x (1 - pay) ise -> BITTI.  Pay Settings > Shop rules'tadir,
+       2.4.0'da %0.  Standart suresi 0 olan operasyon yalniz X ile kapanir.
+    3  Digerleri DEVAM EDIYOR; girilen sure kadar ilerlemistir.
+
+TAMAMLANMA ZAMANI
+    X'li giris varsa EN GEC X'li normal giris, yoksa SON normal giris.
+    Kayit tarihi (C) + saat (Z).  "Use the entry time" kapaliysa yalniz
+    kayit tarihi.  Hic normal girisi olmayan gecilmis operasyon bitmistir
+    ama TARIHI YOKTUR.
+
+SURE
+    Operasyonda (sekans bazinda) makine suresi (O) girilmisse yalniz makine
+    sureleri toplanir; hic girilmemisse iscilik (P).  Setup, rework ve
+    Toplam Is (T) girmez.  Lead Time'daki OPERATION TIME da budur.
+
+SEKANSLAR
+    Bir operasyonun sekanslari (280, 280/2, 280/7) AYRI degerlendirilir,
+    sira degisebilir.  Operasyon, butun sekanslari bitince biter; bitis
+    zamani en son biten sekansinkidir.  Parca: islenen acik sekansta,
+    yoksa ilk acik sekansta bekler.  Sonraki OPERASYONA giris varsa
+    hepsi bitmis sayilir.
+
+LEAD TIME
+    Adim = bu adimin tamamlanmasi - bir onceki tamamlanma.  Sekansli
+    operasyonda sekanslar BITIS ZAMANINA gore siralanir; sonraki operasyon
+    en son biten sekanstan olculur.  Onceki operasyonun tarihi yoksa
+    (hic girilmemis) o adim OLCULMEZ.  Negatif ve medyanin 3 katini asan
+    degerler ortalamaya girmez.  Gruplar: grubun son operasyonu - onceki
+    grubun son operasyonu.
+
+LEAD TIME ICINDE REWORK (iki ton kirmizi)
+    Op N bittikten SONRA ve op N+1 bitmeden ONCE op N'e (G sutunu) girilen
+    rework kayitlari:
+        kirmizi toplam = son rework girisi - op N tamamlanma
+        REWORK TIME    = o girislerin rework saatleri (Q) toplami
+        REWORK QUEUE   = kirmizi toplam - rework time
+    Op N+1'in lead time'indan dusulup op N+1 satirinda gosterilir.
+    Op N+1 bittikten sonraki rework girisleri sayilmaz.
+
+CAUSE OP SORUMLUSU: cause operasyondaki setup olmayan EN SON giris
+    (tarih + saat) - tezgah ve kisi.
+B1000: devam eden parcanin tezgahi = o operasyondaki kendi son girisi.
+
+VERI KONTROLU (Settings > Data health > Check the bookings)
+    X, HOURS SHORT   X var, saat standardin altinda, sonrasina giris yok
+    LATE ENTRIES     sonraki operasyon basladiktan sonra onceki operasyona
+                     yapilan normal giris
+    MISSING ENTRIES  girissiz gecilmis rota adimi
+    ENTERED LATE     kayit tarihi (C) ile giris tarihi (Y) farki > 1 gun
 
 0.0b  AYNI DOSYAYI BIRDEN FAZLA KISI ACTIGINDA  (v55)
 --------------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-WIP TRACKER 2.3.0 - YENI TASARIM (Qt / PySide6)
+WIP TRACKER 2.4.0 - YENI TASARIM (Qt / PySide6)
 =============================================
 
 Bu surum ekranlari bastan yeni tasarimla (Qt) kurar.  Veri, hesaplar ve
@@ -78,6 +78,40 @@ eski surumle yan yana calisabilir.
 
 
 ============================================================
+2.4.0  -  YENI HESAPLAMA MANTIGI (11.11.2026)
+--------------------------------------------------------------------------------
+Ayrinti: HESAPLAMA_MANTIGI.txt BOLUM 0.0 ve sunum
+(WIP_TRACKER_Hesaplama_Mantigi.pptx).
+
+  * OPERASYON NE ZAMAN BITER: sonraki operasyonlardan birine uretim girisi
+    varsa onceki tum operasyonlar bitmistir.  Yoksa X tek basina yetmez:
+    girilen sure traveler'daki standart sureye ulasmalidir (pay %0;
+    Settings > Shop rules > Std margin).  Standart suresi 0 olan operasyon
+    yalniz X ile kapanir.
+  * SURE: operasyonda makine suresi girildiyse yalniz makine sureleri,
+    hic girilmediyse iscilik (P).  Setup (Unit H) ve rework girisleri
+    sureye, tamamlanmaya ve "sonraki operasyona giris" kuralina girmez.
+  * SEKANSLAR ayri degerlendirilir; hepsi bitince operasyon biter.  Lead
+    time'da sekanslar bitis zamanina gore siralanir.
+  * LEAD TIME: tamamlanma - onceki tamamlanma.  Hic girisi olmayan
+    operasyonun tarihi yoktur, ondan sonraki adim olculmez.
+  * LEAD TIME ICINDE REWORK iki ton kirmizi: rework time (girilen rework
+    saatleri) + rework queue (kalan bekleme).  Steps tablosunda iki yeni
+    sutun, grafiklerde iki yeni renk.
+  * YENI MODUL: Lead Time > Actual / standard (operasyon bazinda gercek
+    ortalama sure / standart sure).
+  * YENI AYAR: Settings > Shop rules > "Use the entry time (column Z)".
+    Kapatilirsa tamamlanma yalniz kayit tarihine gore tarihlenir.
+  * VERI KONTROLU: Settings > Data health > "Check the bookings":
+    X var ama saat az / gec girisler / girissiz gecilen adimlar /
+    kayit tarihi ile giris tarihi (Y) arasi 1 gunden fazla olanlar.
+    Y sutunu ilk kez okunuyor: bu son kontrol icin SAP verisi YENIDEN
+    YUKLENMELIDIR.
+  * Cause op sorumlusu: o operasyondaki setup olmayan EN SON giris
+    (tarih + saat).  B1000: tezgah, parcanin o operasyondaki son girisi.
+  * ILK ACILISTA ozet tablo bir kez yeniden kurulur ve Std margin %0'a
+    cekilir (sema 28).
+
 2.3.0  -  HIZ: VERI BU BILGISAYARA KOPYALANIR (YEREL KOPYA)
 ============================================================
 
